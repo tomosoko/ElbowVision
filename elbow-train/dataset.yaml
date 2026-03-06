@@ -1,0 +1,17 @@
+path: /Users/kohei/ElbowVision_Dev/data   # データセットのルートパス（絶対パス）
+train: images/train                        # 訓練画像（path からの相対パス）
+val: images/val                            # 検証画像
+
+# クラス
+names:
+  0: elbow_joint
+
+# キーポイント設定
+kpt_shape: [4, 3]   # [キーポイント数, 次元数 (x, y, visible)]
+flip_idx: [0, 2, 1, 3]  # 左右反転時の対応（外側・内側上顆を入れ替え）
+
+# キーポイント定義（コメント）
+# 0: humerus_shaft     上腕骨幹部（近位端）
+# 1: lateral_epicondyle 外側上顆
+# 2: medial_epicondyle  内側上顆
+# 3: forearm_shaft     前腕骨幹部（遠位端）

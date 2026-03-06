@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  elbow-api:
+    build: ./elbow-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./elbow-api:/app
+    environment:
+      - CORS_ORIGINS=http://localhost:3000
+    restart: unless-stopped
+
+  elbow-frontend:
+    build: ./elbow-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - elbow-api
+    restart: unless-stopped
