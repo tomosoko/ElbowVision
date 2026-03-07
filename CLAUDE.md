@@ -95,6 +95,12 @@ docker-compose up
 - **屈曲角**：側面像で計測
 - **橈骨頭の傾き**：脱臼・骨折後評価（将来拡張）
 
+## AI推論パイプライン
+1. **YOLOv8-pose**（プライマリ）→ キーポイント検出 → 幾何学的角度計算
+2. **Classical CV**（フォールバック）→ CLAHE + Otsu + 連結成分
+3. **エッジバリデーション**（全モデル共通）→ Canny + HoughLinesP で骨軸を独立検出 → プライマリ角度との差分でconfidence判定
+4. **ConvNeXt-Small**（セカンドオピニオン）→ 角度直接回帰 + Grad-CAM XAI
+
 ---
 
 ## 現在の状況（2026-03-07時点）
@@ -104,8 +110,14 @@ docker-compose up
 - 手順書（docs/）
 - 訓練スクリプト群（elbow-train/）
 
+**完了済み（追加）**
+- ConvNeXt セカンドオピニオン + Grad-CAM XAI
+- エッジバリデーション（Canny + Hough → 骨軸角度で自動検証）
+- フロントエンド：セカンドオピニオン紫表示・エッジ検証バナー・Grad-CAMタブ
+
 **次にやること**
 1. 肘ファントムを職場でAP・側面撮影
 2. DICOMをPNGに変換（dicom_to_png.py）
 3. LabelStudioでキーポイントアノテーション（docs/02参照）
 4. YOLOv8-pose訓練（train_yolo_pose.py）
+5. ConvNeXt訓練（elbow-api/training/train_angle_predictor.py）

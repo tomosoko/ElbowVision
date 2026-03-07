@@ -35,9 +35,17 @@ interface SecondOpinion {
   varus_valgus:   number;
   model:          string;
 }
+interface EdgeValidation {
+  edge_angle:    number | null;
+  agreement_deg: number | null;
+  confidence:    "high" | "medium" | "low";
+  edge_lines:    number;
+  note:          string;
+}
 interface AnalyzeResponse {
   success: boolean;
   landmarks: Landmarks;
+  edge_validation: EdgeValidation | null;
   second_opinion: SecondOpinion | null;
   image_size: { width: number; height: number };
 }
@@ -219,11 +227,9 @@ export default function ElbowVisionPage() {
       const form = new FormData();
       form.append("file", currentFile);
       const res = await fetch(`${API_URL}/api/gradcam?target=${target}`, { method: "POST", body: form });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || `GradCAM failed: ${res.status}`);
-      }
-      setGradCamResult(await res.json());
+      const data = await res.json();
+      // 503 = モデル未訓練。success:false のまま結果にセットして黄色バナーで表示
+      setGradCamResult(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "GradCAM error");
     } finally {
@@ -336,6 +342,29 @@ export default function ElbowVisionPage() {
                 {activeTab === "analysis" && (
                   <>
                     <QABadge qa={analysisResult.landmarks.qa} />
+
+                    {/* エッジバリデーション */}
+                    {analysisResult.edge_validation && (() => {
+                      const ev = analysisResult.edge_validation!;
+                      const colorMap = {
+                        high:   "bg-green-900/40 border-green-700 text-green-300",
+                        medium: "bg-yellow-900/40 border-yellow-700 text-yellow-300",
+                        low:    "bg-red-900/40 border-red-700 text-red-300",
+                      };
+                      const icon = { high: "✓", medium: "△", low: "✗" };
+                      return (
+                        <div className={`rounded-lg border px-3 py-2 text-xs flex items-start gap-2 ${colorMap[ev.confidence]}`}>
+                          <span className="font-bold text-base leading-none mt-0.5">{icon[ev.confidence]}</span>
+                          <div>
+                            <span className="font-semibold">エッジ検証 </span>
+                            {ev.edge_angle !== null
+                              ? <span className="font-mono">{ev.edge_angle}°（差 {ev.agreement_deg}°）</span>
+                              : <span>検出失敗</span>}
+                            <span className="ml-2 opacity-70">{ev.note}</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* ConvNeXt モデル説明バナー */}
                     {so && (

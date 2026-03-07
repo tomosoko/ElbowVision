@@ -215,6 +215,95 @@ def full_angle(a1, a2):
     return 360 - diff if diff > 180 else diff
 
 
+# ─── エッジバリデーション ──────────────────────────────────────────────────────
+def validate_angle_with_edges(image_array: np.ndarray, primary_angle: float) -> dict:
+    """
+    Canny + Hough変換で骨幹の軸線を検出し、プライマリ角度（YOLOv8 or Classical CV）を検証する。
+
+    手順:
+      1. CLAHE でコントラスト強調 → Canny エッジ検出
+      2. 上半分（上腕骨域）と下半分（前腕骨域）に分割
+      3. 各領域で HoughLinesP → 長さ重み付き平均角度を算出
+      4. 上腕骨軸と前腕骨軸から関節角度を計算
+      5. プライマリ角度との差分でconfidenceを判定
+
+    戻り値:
+      edge_angle    : エッジから算出した関節角度（検出失敗時は None）
+      agreement_deg : プライマリ角度との差（小さいほど良い）
+      confidence    : "high" / "medium" / "low"
+      edge_lines    : 検出した直線数
+      note          : 判定コメント
+    """
+    h, w = image_array.shape[:2]
+
+    gray = cv2.cvtColor(image_array, cv2.COLOR_BGR2GRAY) if len(image_array.shape) == 3 else image_array.copy()
+    gray = gray.astype(np.uint8)
+
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(gray)
+    blurred = cv2.GaussianBlur(enhanced, (3, 3), 0)
+    otsu_thresh, _ = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    edges = cv2.Canny(blurred, otsu_thresh * 0.4, otsu_thresh)
+
+    def dominant_angle(region: np.ndarray) -> Optional[float]:
+        rh, rw = region.shape[:2]
+        min_len = max(rh, rw) * 0.25
+        lines = cv2.HoughLinesP(region, 1, np.pi / 180, threshold=30,
+                                minLineLength=int(min_len), maxLineGap=20)
+        if lines is None:
+            return None
+        angles, weights = [], []
+        for x1, y1, x2, y2 in lines[:, 0]:
+            length = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+            ang = math.degrees(math.atan2(y2 - y1, x2 - x1))
+            if abs(ang) < 15 or abs(ang) > 165:  # 水平に近い線（骨幹と垂直）を除外
+                continue
+            angles.append(ang)
+            weights.append(length)
+        if not angles:
+            return None
+        return float(np.average(angles, weights=np.array(weights)))
+
+    split = int(h * 0.5)
+    upper_edge = edges[:split, :]
+    lower_edge = edges[split:, :]
+
+    upper_ang = dominant_angle(upper_edge)
+    lower_ang = dominant_angle(lower_edge)
+
+    def count_lines(region):
+        min_len = int(region.shape[0] * 0.25)
+        result = cv2.HoughLinesP(region, 1, np.pi/180, 30, minLineLength=min_len, maxLineGap=20)
+        return len(result) if result is not None else 0
+
+    n_lines = count_lines(upper_edge) + count_lines(lower_edge)
+
+    if upper_ang is None or lower_ang is None:
+        return {
+            "edge_angle": None, "agreement_deg": None,
+            "confidence": "low", "edge_lines": n_lines,
+            "note": "骨幹ラインの検出に失敗（エッジ不明瞭）",
+        }
+
+    edge_angle = round(full_angle(upper_ang, lower_ang), 1)
+    agreement  = round(abs(edge_angle - primary_angle), 1)
+
+    if agreement <= 3.0:
+        confidence, note = "high",   f"エッジ一致 ✓ 差{agreement:.1f}° — 角度信頼性が高い"
+    elif agreement <= 8.0:
+        confidence, note = "medium", f"エッジ軽度不一致 差{agreement:.1f}° — ポジショニング微調整を推奨"
+    else:
+        confidence, note = "low",    f"エッジ不一致 差{agreement:.1f}° — 再撮影またはキーポイント確認を推奨"
+
+    return {
+        "edge_angle":    edge_angle,
+        "agreement_deg": agreement,
+        "confidence":    confidence,
+        "edge_lines":    n_lines,
+        "note":          note,
+    }
+
+
 # ─── YOLOv8-Pose 推論（プライマリ） ───────────────────────────────────────────
 def detect_with_yolo_pose(image_array: np.ndarray) -> Optional[dict]:
     """
@@ -549,6 +638,13 @@ async def analyze_elbow(file: UploadFile = File(...)):
         if landmarks is None:
             landmarks = detect_bone_landmarks_classical(image_array)
 
+        # エッジバリデーション（AP/LATで有効な角度のみ検証）
+        angles = landmarks["angles"]
+        primary_angle = angles["carrying_angle"] if angles["carrying_angle"] is not None else angles["flexion"]
+        edge_validation = None
+        if primary_angle is not None:
+            edge_validation = validate_angle_with_edges(image_array, primary_angle)
+
         # ConvNeXt セカンドオピニオン
         second_opinion = None
         if TORCH_INSTALLED and convnext_model is not None:
@@ -572,6 +668,7 @@ async def analyze_elbow(file: UploadFile = File(...)):
         return JSONResponse(content={
             "success": True,
             "landmarks": landmarks,
+            "edge_validation": edge_validation,
             "second_opinion": second_opinion,
             "image_size": {"width": image_array.shape[1], "height": image_array.shape[0]},
         })
