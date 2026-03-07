@@ -46,12 +46,17 @@ OsteoVision（膝）のインフラをそのまま流用して横展開。
 | `next.config.ts` | Next.js設定 |
 | `Dockerfile` | Docker設定 |
 
+### elbow-api/training/ — ConvNeXtセカンドオピニオン訓練（OsteoVisionのtraining/に相当）
+| ファイル | 何のファイルか |
+|---|---|
+| `convnext_model.py` | ElbowConvNeXt モデル定義（API・訓練スクリプトで共有） |
+| `train_angle_predictor.py` | ConvNeXt訓練スクリプト（AP/LAT損失マスク付き） |
+
 ### elbow-train/ — YOLOv8訓練関連スクリプト
 | ファイル | 何のファイルか |
 |---|---|
 | `dicom_to_png.py` | DICOMファイルをPNG画像に変換する |
 | `batch_analyze.py` | 複数画像をまとめて解析する |
-| `ct_reorient.py` | CT画像の向きを補正する |
 | `train_yolo_pose.py` | YOLOv8-poseを訓練するメインスクリプト |
 | `dataset.yaml` | YOLOデータセット設定 |
 | `annotation_guide.md` | アノテーション作業ガイド |
