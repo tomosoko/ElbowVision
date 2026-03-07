@@ -13,8 +13,8 @@ interface LandmarkPoint {
 }
 
 interface ElbowAngles {
-  carrying_angle: number;
-  flexion: number;
+  carrying_angle: number | null;
+  flexion: number | null;
   pronation_sup: number;
   ps_label: string;
   varus_valgus: number;
@@ -50,16 +50,6 @@ interface AnalyzeResponse {
   image_size: { width: number; height: number };
 }
 
-interface GradCamResponse {
-  success: boolean;
-  heatmap_overlay: string;
-  raw_heatmap: string;
-  predicted_angles: Record<string, number>;
-  target: string;
-  engine_used: string;
-  note: string;
-}
-
 // ─── 定数 ──────────────────────────────────────────────────────────────────────
 const LANDMARK_COLORS: Record<string, string> = {
   humerus_shaft:      "#3b82f6",  // 青  — 上腕骨近位
@@ -68,13 +58,6 @@ const LANDMARK_COLORS: Record<string, string> = {
   medial_epicondyle:  "#ec4899",  // ピンク — 内側上顆
   forearm_shaft:      "#22c55e",  // 緑  — 前腕遠位
 };
-
-const GRADCAM_TARGETS = [
-  { key: "all",       label: "総合" },
-  { key: "carrying",  label: "外反角" },
-  { key: "flexion",   label: "屈曲角" },
-  { key: "pronation", label: "回内外" },
-];
 
 // ─── QA バッジ ─────────────────────────────────────────────────────────────────
 function QABadge({ qa }: { qa: QAInfo }) {
@@ -97,7 +80,7 @@ function QABadge({ qa }: { qa: QAInfo }) {
       </div>
       <div className="w-full bg-gray-700 rounded-full h-2 mb-2">
         <div
-          className={`qa-bar-inner ${barColorMap[qa.color]}`}
+          className={`h-2 rounded-full transition-all ${barColorMap[qa.color]}`}
           style={{ width: `${qa.score}%` }}
         />
       </div>
@@ -123,22 +106,29 @@ function AngleCard({
   description,
 }: {
   title: string;
-  value: number;
+  value: number | null;
   unit: string;
   label?: string;
   normalRange?: string;
   description?: string;
 }) {
+  const isNA = value === null || value === undefined;
   return (
-    <div className="angle-card">
+    <div className="bg-gray-900 rounded-xl border border-gray-700 p-4">
       <p className="text-xs text-gray-400 mb-1">{title}</p>
       <div className="flex items-baseline gap-1">
-        <span className="text-3xl font-bold text-white font-mono">{value.toFixed(1)}</span>
-        <span className="text-gray-400 text-sm">{unit}</span>
+        {isNA ? (
+          <span className="text-2xl font-bold text-gray-600 font-mono">N/A</span>
+        ) : (
+          <>
+            <span className="text-3xl font-bold text-white font-mono">{value!.toFixed(1)}</span>
+            <span className="text-gray-400 text-sm">{unit}</span>
+          </>
+        )}
       </div>
-      {label && <p className="text-xs text-blue-400 mt-1">{label}</p>}
-      {normalRange && <p className="text-xs text-gray-500 mt-1">正常: {normalRange}</p>}
-      {description && <p className="text-xs text-gray-500 mt-1">{description}</p>}
+      {label && !isNA && <p className="text-xs text-blue-400 mt-1">{label}</p>}
+      {normalRange && !isNA && <p className="text-xs text-gray-500 mt-1">正常: {normalRange}</p>}
+      {description && <p className="text-xs text-gray-500 mt-1">{isNA ? "この像では測定不可" : description}</p>}
     </div>
   );
 }
@@ -160,9 +150,6 @@ function LandmarkOverlay({
     { key: "medial_epicondyle",  pt: landmarks.medial_epicondyle,  label: "内顆" },
     { key: "forearm_shaft",      pt: landmarks.forearm_shaft,      label: "前腕" },
   ];
-
-  const scaleX = (v: number) => `${(v / imageWidth) * 100}%`;
-  const scaleY = (v: number) => `${(v / imageHeight) * 100}%`;
 
   return (
     <svg
@@ -209,20 +196,14 @@ function LandmarkOverlay({
 export default function ElbowVisionPage() {
   const [imageData, setImageData] = useState<string | null>(null);
   const [analysisResult, setAnalysisResult] = useState<AnalyzeResponse | null>(null);
-  const [gradCamResult, setGradCamResult] = useState<GradCamResponse | null>(null);
-  const [activeTab, setActiveTab] = useState<"analysis" | "gradcam">("analysis");
-  const [selectedGradCamTarget, setSelectedGradCamTarget] = useState("all");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [isGradCam, setIsGradCam] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [currentFile, setCurrentFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const analyzeFile = useCallback(async (file: File) => {
     setError(null);
     setIsAnalyzing(true);
-    setGradCamResult(null);
 
     try {
       // アップロード（画像表示用）
@@ -240,8 +221,6 @@ export default function ElbowVisionPage() {
       if (!analyzeRes.ok) throw new Error(`Analysis failed: ${analyzeRes.status}`);
       const analyzeData: AnalyzeResponse = await analyzeRes.json();
       setAnalysisResult(analyzeData);
-      setCurrentFile(file);
-      setActiveTab("analysis");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
     } finally {
@@ -257,26 +236,6 @@ export default function ElbowVisionPage() {
       return;
     }
     analyzeFile(file);
-  };
-
-  const runGradCam = async () => {
-    if (!currentFile) return;
-    setIsGradCam(true);
-    setError(null);
-    try {
-      const form = new FormData();
-      form.append("file", currentFile);
-      const res = await fetch(`${API_URL}/api/gradcam?target=${selectedGradCamTarget}`, {
-        method: "POST", body: form,
-      });
-      if (!res.ok) throw new Error(`GradCAM failed: ${res.status}`);
-      const data: GradCamResponse = await res.json();
-      setGradCamResult(data);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "GradCAM error");
-    } finally {
-      setIsGradCam(false);
-    }
   };
 
   return (
@@ -304,7 +263,9 @@ export default function ElbowVisionPage() {
             {/* アップロードゾーン */}
             {!imageData && (
               <div
-                className={`upload-zone rounded-xl p-10 text-center cursor-pointer ${dragOver ? "drag-over" : ""}`}
+                className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors ${
+                  dragOver ? "border-blue-500 bg-blue-950/30" : "border-gray-700 hover:border-gray-500"
+                }`}
                 onClick={() => fileInputRef.current?.click()}
                 onDragOver={e => { e.preventDefault(); setDragOver(true); }}
                 onDragLeave={() => setDragOver(false)}
@@ -334,28 +295,21 @@ export default function ElbowVisionPage() {
             {imageData && (
               <div className="relative rounded-xl overflow-hidden bg-black border border-gray-700">
                 <img
-                  src={
-                    activeTab === "gradcam" && gradCamResult
-                      ? gradCamResult.heatmap_overlay
-                      : imageData
-                  }
+                  src={imageData}
                   alt="肘X線"
                   className="w-full object-contain"
                 />
-                {activeTab === "analysis" && analysisResult && (
+                {analysisResult && (
                   <LandmarkOverlay
                     landmarks={analysisResult.landmarks}
                     imageWidth={analysisResult.image_size.width}
                     imageHeight={analysisResult.image_size.height}
                   />
                 )}
-                {/* 再アップロードボタン */}
                 <button
                   onClick={() => {
                     setImageData(null);
                     setAnalysisResult(null);
-                    setGradCamResult(null);
-                    setCurrentFile(null);
                   }}
                   className="absolute top-2 right-2 bg-black/60 hover:bg-black text-white text-xs px-3 py-1 rounded-full"
                 >
@@ -369,7 +323,7 @@ export default function ElbowVisionPage() {
               <div className="grid grid-cols-3 gap-2">
                 {Object.entries(LANDMARK_COLORS).map(([key, color]) => (
                   <div key={key} className="flex items-center gap-2 text-xs text-gray-400">
-                    <span className="w-3 h-3 rounded-full" style={{ background: color }} />
+                    <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: color }} />
                     <span>{
                       { humerus_shaft: "上腕骨", condyle_center: "顆部",
                         lateral_epicondyle: "外側上顆", medial_epicondyle: "内側上顆",
@@ -398,27 +352,7 @@ export default function ElbowVisionPage() {
 
           {/* ── 右カラム: 解析結果 ── */}
           <div className="space-y-4">
-            {/* タブ */}
-            {analysisResult && (
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setActiveTab("analysis")}
-                  className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-colors ${activeTab === "analysis" ? "tab-active" : "tab-inactive"}`}
-                >
-                  ランドマーク解析
-                </button>
-                <button
-                  onClick={() => { setActiveTab("gradcam"); if (!gradCamResult) runGradCam(); }}
-                  className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-colors ${activeTab === "gradcam" ? "tab-active" : "tab-inactive"}`}
-                  disabled={isGradCam}
-                >
-                  {isGradCam ? "生成中..." : "Grad-CAM XAI"}
-                </button>
-              </div>
-            )}
-
-            {/* ── 解析タブ ── */}
-            {activeTab === "analysis" && analysisResult && (
+            {analysisResult ? (
               <>
                 {/* QAスコア */}
                 <QABadge qa={analysisResult.landmarks.qa} />
@@ -492,89 +426,23 @@ export default function ElbowVisionPage() {
                   </table>
                 </div>
               </>
-            )}
-
-            {/* ── Grad-CAM タブ ── */}
-            {activeTab === "gradcam" && (
-              <div className="space-y-4">
-                {/* ターゲット選択 */}
-                <div className="flex gap-2 flex-wrap">
-                  {GRADCAM_TARGETS.map(t => (
-                    <button
-                      key={t.key}
-                      onClick={() => {
-                        setSelectedGradCamTarget(t.key);
-                        setGradCamResult(null);
-                      }}
-                      className={`py-1.5 px-4 rounded-lg text-sm transition-colors ${
-                        selectedGradCamTarget === t.key ? "tab-active" : "tab-inactive"
-                      }`}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
-                  <button
-                    onClick={runGradCam}
-                    disabled={isGradCam || !currentFile}
-                    className="py-1.5 px-4 rounded-lg text-sm bg-purple-700 hover:bg-purple-600 disabled:opacity-50 transition-colors"
-                  >
-                    {isGradCam ? "生成中..." : "生成"}
-                  </button>
-                </div>
-
-                {/* GradCAM 結果 */}
-                {gradCamResult && (
-                  <>
-                    <div className="bg-gray-900 rounded-xl border border-gray-700 p-4">
-                      <p className="text-xs text-gray-400 mb-3">{gradCamResult.note}</p>
-                      <div className="grid grid-cols-2 gap-3 text-xs">
-                        {Object.entries(gradCamResult.predicted_angles).map(([k, v]) => (
-                          <div key={k} className="bg-gray-800 rounded-lg p-2">
-                            <p className="text-gray-500">{k}</p>
-                            <p className="text-white font-mono font-bold">{v.toFixed(1)}°</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    {gradCamResult.raw_heatmap && (
-                      <div>
-                        <p className="text-xs text-gray-400 mb-2">ヒートマップのみ</p>
-                        <img
-                          src={gradCamResult.raw_heatmap}
-                          alt="GradCAM heatmap"
-                          className="w-full rounded-xl border border-gray-700"
-                        />
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {!gradCamResult && !isGradCam && (
-                  <div className="text-center text-gray-500 py-10">
-                    <p className="text-4xl mb-3">🔬</p>
-                    <p className="text-sm">「生成」ボタンでGrad-CAM XAIを実行</p>
-                    <p className="text-xs mt-1">AIが注目した部位を可視化します</p>
+            ) : (
+              /* 初期状態 */
+              !isAnalyzing && (
+                <div className="text-center text-gray-600 py-16">
+                  <p className="text-5xl mb-4">🦴</p>
+                  <p className="text-lg text-gray-500">肘X線画像をアップロードしてください</p>
+                  <p className="text-sm mt-2">DICOM / PNG / JPEG 対応</p>
+                  <div className="mt-6 text-left bg-gray-900 rounded-xl p-4 border border-gray-800 text-xs text-gray-500 space-y-1">
+                    <p className="text-gray-400 font-medium mb-2">測定項目</p>
+                    <p>• 外反角（Carrying Angle）— AP像 / 正常 5〜15°</p>
+                    <p>• 屈曲角（Flexion）— 側面像 / 完全伸展 0° / 完全屈曲 150°</p>
+                    <p>• 回内外（Pronation/Supination）</p>
+                    <p>• 内反外反（Varus/Valgus）</p>
+                    <p>• ポジショニングQAスコア</p>
                   </div>
-                )}
-              </div>
-            )}
-
-            {/* 初期状態 */}
-            {!analysisResult && !isAnalyzing && (
-              <div className="text-center text-gray-600 py-16">
-                <p className="text-5xl mb-4">🦴</p>
-                <p className="text-lg text-gray-500">肘X線画像をアップロードしてください</p>
-                <p className="text-sm mt-2">DICOM / PNG / JPEG 対応</p>
-                <div className="mt-6 text-left bg-gray-900 rounded-xl p-4 border border-gray-800 text-xs text-gray-500 space-y-1">
-                  <p className="text-gray-400 font-medium mb-2">測定項目（6DoF）</p>
-                  <p>• 外反角（Carrying Angle）— 正常 5〜15°</p>
-                  <p>• 屈曲角（Flexion）— 完全伸展 0° / 完全屈曲 150°</p>
-                  <p>• 回内外（Pronation/Supination）</p>
-                  <p>• 内反外反（Varus/Valgus）</p>
-                  <p>• ポジショニングQAスコア</p>
-                  <p>• Grad-CAM XAI 可視化</p>
                 </div>
-              </div>
+              )
             )}
           </div>
         </div>

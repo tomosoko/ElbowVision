@@ -12,19 +12,13 @@ import cv2
 import numpy as np
 import base64
 
-import torch
-import torch.nn as nn
-from torchvision import models, transforms
-from PIL import Image
-
 # DICOMメタデータの欠損に対して寛容に処理
 pydicom.config.enforce_valid_values = False
 
 app = FastAPI(title="ElbowVision API", version="1.0.0")
 
-# --- Deep Learning Model Setup ---
+# --- YOLOv8 Pose Model ---
 
-# 1. YOLOv8 Pose Model (主要ランドマーク検出器)
 try:
     from ultralytics import YOLO
     YOLO_INSTALLED = True
@@ -49,110 +43,6 @@ if YOLO_INSTALLED and os.path.exists(YOLO_MODEL_PATH):
 else:
     print("YOLOv8 Pose model not found. Falling back to Classical CV.")
 
-# 2. ResNet 角度回帰モデル + Grad-CAM (XAI)
-class ElbowAnglePredictor(nn.Module):
-    """
-    ResNet50バックボーンによる肘関節6DoF角度回帰モデル。
-    出力: [carrying_angle, flexion, pronation_supination, varus_valgus, ap_translation, lat_translation]
-    """
-    def __init__(self):
-        super(ElbowAnglePredictor, self).__init__()
-        self.backbone = models.resnet50(weights=None)
-        num_ftrs = self.backbone.fc.in_features
-        self.backbone.fc = nn.Sequential(
-            nn.Dropout(0.5),
-            nn.Linear(num_ftrs, 128),
-            nn.ReLU(),
-            nn.Linear(128, 6)  # 6DoF: carrying_angle, flexion, pronation, varus, ap_trans, lat_trans
-        )
-
-    def forward(self, x):
-        return self.backbone(x)
-
-RESNET_MODEL_PATH = "elbow_angle_predictor_best.pth"
-dl_model = None
-device = torch.device(
-    "cuda" if torch.cuda.is_available()
-    else "mps" if torch.backends.mps.is_available()
-    else "cpu"
-)
-
-if os.path.exists(RESNET_MODEL_PATH):
-    try:
-        dl_model = ElbowAnglePredictor()
-        dl_model.load_state_dict(torch.load(RESNET_MODEL_PATH, map_location=device))
-        dl_model.to(device)
-        dl_model.eval()
-        print(f"Loaded ResNet Angle Predictor (Elbow XAI) on {device}.")
-    except Exception as e:
-        dl_model = None
-        print(f"Failed to load ResNet model: {e}")
-else:
-    print(f"ResNet model not found at {RESNET_MODEL_PATH}. XAI feature disabled.")
-
-dl_transforms = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-])
-
-
-# ─── Grad-CAM ─────────────────────────────────────────────────────────────────
-class GradCAM:
-    """
-    ResNet50のlayer4最終ブロックに対してGrad-CAMを計算する。
-    AIが「どこを見て角度を判断したか」を可視化するXAIツール。
-    """
-    def __init__(self, model: nn.Module):
-        self.model = model
-        self.activations: Optional[torch.Tensor] = None
-        self.gradients: Optional[torch.Tensor] = None
-        target_layer = model.backbone.layer4[-1]
-        target_layer.register_forward_hook(self._save_activation)
-        target_layer.register_full_backward_hook(self._save_gradient)
-
-    def _save_activation(self, module, input, output):
-        self.activations = output.detach()
-
-    def _save_gradient(self, module, grad_input, grad_output):
-        self.gradients = grad_output[0].detach()
-
-    def generate(self, img_tensor: torch.Tensor, target_idx: Optional[int] = None) -> np.ndarray:
-        """
-        Grad-CAMヒートマップを生成（numpy配列、0〜1正規化）。
-        target_idx: None=全出力の和, 0=carrying, 1=flexion, 2=pronation,
-                    3=varus_valgus, 4=ap_trans, 5=lat_trans
-        """
-        self.model.eval()
-        img_tensor = img_tensor.unsqueeze(0).to(device)
-        img_tensor.requires_grad_(True)
-        output = self.model(img_tensor)
-        self.model.zero_grad()
-        score = output.sum() if target_idx is None else output[0, target_idx]
-        score.backward()
-        weights = self.gradients.mean(dim=[2, 3], keepdim=True)
-        cam = (weights * self.activations).sum(dim=1, keepdim=True)
-        cam = torch.relu(cam).squeeze().cpu().numpy()
-        if cam.max() > cam.min():
-            cam = (cam - cam.min()) / (cam.max() - cam.min())
-        return cam
-
-
-def apply_gradcam_overlay(image_bgr: np.ndarray, cam: np.ndarray, alpha: float = 0.5) -> np.ndarray:
-    h, w = image_bgr.shape[:2]
-    cam_resized = cv2.resize(cam, (w, h))
-    heatmap = cv2.applyColorMap((cam_resized * 255).astype(np.uint8), cv2.COLORMAP_JET)
-    return cv2.addWeighted(image_bgr, 1 - alpha, heatmap, alpha, 0)
-
-
-gradcam_engine: Optional[GradCAM] = None
-if dl_model is not None:
-    try:
-        gradcam_engine = GradCAM(dl_model)
-        print("GradCAM engine initialized.")
-    except Exception as e:
-        print(f"GradCAM init failed: {e}")
-
 # ─── CORS ─────────────────────────────────────────────────────────────────────
 _CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",")
 app.add_middleware(
@@ -172,8 +62,6 @@ async def health_check():
         "version": "1.0.0",
         "engines": {
             "yolo_pose":   yolo_model is not None,
-            "resnet_xai":  dl_model is not None,
-            "gradcam_xai": gradcam_engine is not None,
             "classical_cv": True,
         },
         "message": "ElbowVision AI API is running."
@@ -213,9 +101,9 @@ def full_angle(a1, a2):
 # ─── YOLOv8-Pose 推論（プライマリ） ───────────────────────────────────────────
 def detect_with_yolo_pose(image_array: np.ndarray) -> Optional[dict]:
     """
-    YOLOv8-Poseで4つの解剖学的キーポイントを検出し、肘関節6DoF角度を算出。
+    YOLOv8-Poseで4つの解剖学的キーポイントを検出し、肘関節角度を算出。
 
-    キーポイント順（学習ファクトリーに対応）:
+    キーポイント順:
       0: humerus_shaft    — 上腕骨幹部（近位）
       1: lateral_epicondyle — 外側上顆
       2: medial_epicondyle  — 内側上顆
@@ -224,8 +112,6 @@ def detect_with_yolo_pose(image_array: np.ndarray) -> Optional[dict]:
     計算する角度:
       - carrying_angle   外反角（AP像: 正常5〜15°）
       - flexion          屈曲角（側面像: 0〜150°）
-      - pronation_sup    回内外角（前腕捩れ）
-      - varus_valgus     内反外反
     """
     if yolo_model is None:
         return None
@@ -258,7 +144,6 @@ def detect_with_yolo_pose(image_array: np.ndarray) -> Optional[dict]:
         }
 
         # ── 外顆間距離でView判定（AP / LAT） ─────────────────────────────────
-        # ※ 角度計算より先に判定し、AP/LATで出力を分岐する
         epic_sep = math.sqrt(
             (lat_epic_pt["x"] - med_epic_pt["x"]) ** 2 +
             (lat_epic_pt["y"] - med_epic_pt["y"]) ** 2
@@ -271,17 +156,16 @@ def detect_with_yolo_pose(image_array: np.ndarray) -> Optional[dict]:
         joint_angle = round(full_angle(humerus_axis_angle, forearm_axis_angle), 1)
 
         # ── 外反角 / 屈曲角（view_typeで分岐） ─────────────────────────────
-        # AP像: 外反角（carrying_angle）を計算。屈曲角は測定不能（0.0）。
-        # LAT像: 屈曲角（flexion）を計算。外反角は測定不能（0.0）。
+        # AP像: 外反角（carrying_angle）を計算。屈曲角は測定不能（None）。
+        # LAT像: 屈曲角（flexion）を計算。外反角は測定不能（None）。
         if view_type == "AP":
             carrying_angle = joint_angle
-            flexion = 0.0
+            flexion = None
         else:
             flexion = joint_angle
-            carrying_angle = 0.0
+            carrying_angle = None
 
         # ── 回内外（Pronation / Supination） ────────────────────────────────
-        # AP像: 外顆・内顆の非対称性から推定（前腕捩れを反映）
         shaft_midx = (humerus_pt["x"] + forearm_pt["x"]) / 2
         lat_offset = lat_epic_pt["x"] - shaft_midx
         med_offset = med_epic_pt["x"] - shaft_midx
@@ -300,7 +184,6 @@ def detect_with_yolo_pose(image_array: np.ndarray) -> Optional[dict]:
             ps_label = "中立 (Neutral)"
 
         # ── 内反外反（Varus / Valgus） ────────────────────────────────────
-        # 外顆・内顆の垂直オフセットから推定
         condyle_tilt_angle = angle_deg(med_epic_pt, lat_epic_pt)
         varus_valgus = round(condyle_tilt_angle, 1)
         if varus_valgus > 2.0:
@@ -325,7 +208,6 @@ def detect_with_yolo_pose(image_array: np.ndarray) -> Optional[dict]:
             qa_msg = f"YOLOv8-Pose: 低信頼度 (conf={avg_conf:.2f}). 再撮影を強く推奨。"
             qa_color = "red"
 
-        # ポジショニングアドバイス
         if view_type == "AP" and abs(pronation_sup) > 5:
             direction = "回内" if pronation_sup > 0 else "回外"
             correction = "回外" if pronation_sup > 0 else "回内"
@@ -335,11 +217,9 @@ def detect_with_yolo_pose(image_array: np.ndarray) -> Optional[dict]:
         else:
             positioning_advice = "► ポジショニングは良好です。現在の軸を維持してください。"
 
-        # 前腕軸延長点を推定（描画用）
-        extend_factor = 1.5
         forearm_ext = {
-            "x": condyle_mid["x"] + (forearm_pt["x"] - condyle_mid["x"]) * extend_factor,
-            "y": condyle_mid["y"] + (forearm_pt["y"] - condyle_mid["y"]) * extend_factor,
+            "x": condyle_mid["x"] + (forearm_pt["x"] - condyle_mid["x"]) * 1.5,
+            "y": condyle_mid["y"] + (forearm_pt["y"] - condyle_mid["y"]) * 1.5,
         }
 
         return {
@@ -370,7 +250,7 @@ def detect_with_yolo_pose(image_array: np.ndarray) -> Optional[dict]:
                 "carrying_angle":  carrying_angle,
                 "flexion":         flexion,
                 "pronation_sup":   pronation_sup,
-                "ps_label":        ps_label + " [YOLOv8]",
+                "ps_label":        ps_label,
                 "varus_valgus":    varus_valgus,
                 "vv_label":        vv_label,
             },
@@ -420,7 +300,6 @@ def detect_bone_landmarks_classical(image_array: np.ndarray) -> dict:
             })
     bone_regions.sort(key=lambda r: r["cy"])
 
-    # デフォルトランドマーク
     humerus_pt   = {"x": w * 0.5, "y": h * 0.15}
     condyle_mid  = {"x": w * 0.5, "y": h * 0.5}
     forearm_pt   = {"x": w * 0.5, "y": h * 0.85}
@@ -435,13 +314,11 @@ def detect_bone_landmarks_classical(image_array: np.ndarray) -> dict:
         hm = (labels == humerus_bone["label"]).astype(np.uint8)
         ys, xs = np.where(hm)
         if len(ys):
-            # 最下点 = 顆部
             bottom_row = int(ys.max())
             cols_at_bottom = xs[ys == bottom_row]
             condyle_mid = {"x": float(cols_at_bottom.mean()), "y": float(bottom_row)}
             lat_epic_pt = {"x": float(cols_at_bottom.mean()) + w * 0.05, "y": float(bottom_row)}
             med_epic_pt = {"x": float(cols_at_bottom.mean()) - w * 0.05, "y": float(bottom_row)}
-            # 最上点 = 上腕骨近位
             top_row = int(ys.min())
             cols_at_top = xs[ys == top_row]
             humerus_pt = {"x": float(cols_at_top.mean()), "y": float(top_row)}
@@ -455,11 +332,9 @@ def detect_bone_landmarks_classical(image_array: np.ndarray) -> dict:
             bottom_row = int(yf.max())
             cols_top = xf[yf == top_row]
             cols_bottom = xf[yf == bottom_row]
-            forearm_top = {"x": float(cols_top.mean()), "y": float(top_row)}
             forearm_pt = {"x": float(cols_bottom.mean()), "y": float(bottom_row)}
 
     # ── 外顆間距離でView判定（AP / LAT） ─────────────────────────────────
-    # ランドマーク確定後、角度計算より先に判定する
     epic_sep = math.sqrt(
         (lat_epic_pt["x"] - med_epic_pt["x"]) ** 2 +
         (lat_epic_pt["y"] - med_epic_pt["y"]) ** 2
@@ -491,10 +366,10 @@ def detect_bone_landmarks_classical(image_array: np.ndarray) -> dict:
     # AP像: carrying_angle、LAT像: flexion のみ有効
     if view_type == "AP":
         carrying_angle = joint_angle
-        flexion = 0.0
+        flexion = None
     else:
         flexion = joint_angle
-        carrying_angle = 0.0
+        carrying_angle = None
 
     condyle_tilt_angle = angle_deg(med_epic_pt, lat_epic_pt)
     varus_valgus = round(condyle_tilt_angle, 1)
@@ -650,7 +525,7 @@ async def upload_image(file: UploadFile = File(...)):
 @app.post("/api/analyze")
 async def analyze_elbow(file: UploadFile = File(...)):
     """
-    肘X線画像（PNG/JPEG/DICOM）を解析し、ランドマーク座標と6DoF角度を返す。
+    肘X線画像（PNG/JPEG/DICOM）を解析し、ランドマーク座標と角度を返す。
     プライマリ: YOLOv8-Pose / フォールバック: Classical CV
     """
     try:
@@ -658,10 +533,8 @@ async def analyze_elbow(file: UploadFile = File(...)):
         fname = (file.filename or "").lower()
         image_array = _decode_image(content, fname)
 
-        # PRIMARY: YOLOv8-Pose
         landmarks = detect_with_yolo_pose(image_array)
 
-        # FALLBACK: Classical CV
         if landmarks is None:
             print("YOLOv8 not available. Using classical CV fallback.")
             landmarks = detect_bone_landmarks_classical(image_array)
@@ -675,78 +548,6 @@ async def analyze_elbow(file: UploadFile = File(...)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/gradcam")
-async def gradcam_endpoint(
-    file: UploadFile = File(...),
-    target: str = "all"
-):
-    """
-    Grad-CAM XAI エンドポイント。
-    AIが「どこを見て角度を判断したか」をヒートマップで可視化する。
-
-    Parameters:
-        target: "all"         → 全角度の総合注目箇所
-                "carrying"    → 外反角に関連した注目箇所
-                "flexion"     → 屈曲角に関連した注目箇所
-                "pronation"   → 回内外に関連した注目箇所
-    """
-    if gradcam_engine is None or dl_model is None:
-        return JSONResponse(content={
-            "success": False,
-            "error": "ResNet XAI engine not loaded. elbow_angle_predictor_best.pth が必要です。",
-            "engine_used": "unavailable"
-        }, status_code=503)
-
-    try:
-        content = await file.read()
-        fname = (file.filename or "").lower()
-        image_bgr = _decode_image(content, fname)
-        h, w = image_bgr.shape[:2]
-
-        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-        pil_img = Image.fromarray(image_rgb)
-        img_tensor = dl_transforms(pil_img).to(device)
-
-        target_map = {"all": None, "carrying": 0, "flexion": 1, "pronation": 2,
-                      "varus_valgus": 3, "ap_trans": 4, "lat_trans": 5}
-        target_idx = target_map.get(target.lower(), None)
-
-        cam = gradcam_engine.generate(img_tensor, target_idx=target_idx)
-
-        dl_model.eval()
-        with torch.no_grad():
-            pred = dl_model(img_tensor.unsqueeze(0))[0].cpu().numpy()
-        predicted_angles = {
-            "carrying_angle":   round(float(pred[0]), 1),
-            "flexion":          round(float(pred[1]), 1),
-            "pronation_sup":    round(float(pred[2]), 1),
-            "varus_valgus":     round(float(pred[3]), 1),
-            "ap_translation":   round(float(pred[4]), 1),
-            "lat_translation":  round(float(pred[5]), 1),
-        }
-
-        overlay = apply_gradcam_overlay(image_bgr, cam, alpha=0.45)
-        cam_resized = cv2.resize(cam, (w, h))
-        raw_heatmap_bgr = cv2.applyColorMap(
-            (cam_resized * 255).astype(np.uint8), cv2.COLORMAP_JET
-        )
-        _, buf_overlay = cv2.imencode(".png", overlay)
-        _, buf_heatmap = cv2.imencode(".png", raw_heatmap_bgr)
-
-        return JSONResponse(content={
-            "success": True,
-            "engine_used": "gradcam_resnet50",
-            "target": target,
-            "predicted_angles": predicted_angles,
-            "heatmap_overlay": f"data:image/png;base64,{base64.b64encode(buf_overlay).decode()}",
-            "raw_heatmap":     f"data:image/png;base64,{base64.b64encode(buf_heatmap).decode()}",
-            "image_size": {"width": w, "height": h},
-            "note": "Grad-CAM: 赤＝高注目領域（AIが角度判断に使った箇所）、青＝低注目領域"
-        })
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Grad-CAM failed: {str(e)}")
 
 
 if __name__ == "__main__":
