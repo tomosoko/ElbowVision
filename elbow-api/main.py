@@ -257,24 +257,28 @@ def detect_with_yolo_pose(image_array: np.ndarray) -> Optional[dict]:
             "y": (lat_epic_pt["y"] + med_epic_pt["y"]) / 2,
         }
 
-        # 上腕骨軸・前腕骨軸の角度
-        humerus_axis_angle = angle_deg(humerus_pt, condyle_mid)
-        forearm_axis_angle = angle_deg(condyle_mid, forearm_pt)
-
-        # ── 外反角（Carrying Angle） ─────────────────────────────────────────
-        # 上腕骨長軸と前腕骨長軸の間の角度
-        carrying_angle = round(full_angle(humerus_axis_angle, forearm_axis_angle), 1)
-
-        # ── 屈曲角（Flexion） ────────────────────────────────────────────────
-        # AP像では屈曲判定しない（側面像と同じ計算を使用）
-        flexion = round(full_angle(humerus_axis_angle, forearm_axis_angle), 1)
-
         # ── 外顆間距離でView判定（AP / LAT） ─────────────────────────────────
+        # ※ 角度計算より先に判定し、AP/LATで出力を分岐する
         epic_sep = math.sqrt(
             (lat_epic_pt["x"] - med_epic_pt["x"]) ** 2 +
             (lat_epic_pt["y"] - med_epic_pt["y"]) ** 2
         )
         view_type = "AP" if epic_sep > w * 0.08 else "LAT"
+
+        # 上腕骨軸・前腕骨軸の角度
+        humerus_axis_angle = angle_deg(humerus_pt, condyle_mid)
+        forearm_axis_angle = angle_deg(condyle_mid, forearm_pt)
+        joint_angle = round(full_angle(humerus_axis_angle, forearm_axis_angle), 1)
+
+        # ── 外反角 / 屈曲角（view_typeで分岐） ─────────────────────────────
+        # AP像: 外反角（carrying_angle）を計算。屈曲角は測定不能（0.0）。
+        # LAT像: 屈曲角（flexion）を計算。外反角は測定不能（0.0）。
+        if view_type == "AP":
+            carrying_angle = joint_angle
+            flexion = 0.0
+        else:
+            flexion = joint_angle
+            carrying_angle = 0.0
 
         # ── 回内外（Pronation / Supination） ────────────────────────────────
         # AP像: 外顆・内顆の非対称性から推定（前腕捩れを反映）
@@ -454,6 +458,14 @@ def detect_bone_landmarks_classical(image_array: np.ndarray) -> dict:
             forearm_top = {"x": float(cols_top.mean()), "y": float(top_row)}
             forearm_pt = {"x": float(cols_bottom.mean()), "y": float(bottom_row)}
 
+    # ── 外顆間距離でView判定（AP / LAT） ─────────────────────────────────
+    # ランドマーク確定後、角度計算より先に判定する
+    epic_sep = math.sqrt(
+        (lat_epic_pt["x"] - med_epic_pt["x"]) ** 2 +
+        (lat_epic_pt["y"] - med_epic_pt["y"]) ** 2
+    )
+    view_type = "AP" if epic_sep > w * 0.08 else "LAT"
+
     # 回旋推定（外顆・内顆の非対称性）
     shaft_midx = (humerus_pt["x"] + forearm_pt["x"]) / 2
     lat_offset = lat_epic_pt["x"] - shaft_midx
@@ -474,9 +486,15 @@ def detect_bone_landmarks_classical(image_array: np.ndarray) -> dict:
 
     humerus_axis_angle = angle_deg(humerus_pt, condyle_mid)
     forearm_axis_angle = angle_deg(condyle_mid, forearm_pt)
+    joint_angle = round(full_angle(humerus_axis_angle, forearm_axis_angle), 1)
 
-    carrying_angle = round(full_angle(humerus_axis_angle, forearm_axis_angle), 1)
-    flexion = carrying_angle  # LAT像では同じ計算
+    # AP像: carrying_angle、LAT像: flexion のみ有効
+    if view_type == "AP":
+        carrying_angle = joint_angle
+        flexion = 0.0
+    else:
+        flexion = joint_angle
+        carrying_angle = 0.0
 
     condyle_tilt_angle = angle_deg(med_epic_pt, lat_epic_pt)
     varus_valgus = round(condyle_tilt_angle, 1)
@@ -486,12 +504,6 @@ def detect_bone_landmarks_classical(image_array: np.ndarray) -> dict:
         vv_label = "内反 (Varus)"
     else:
         vv_label = "中立 (Neutral)"
-
-    epic_sep = math.sqrt(
-        (lat_epic_pt["x"] - med_epic_pt["x"]) ** 2 +
-        (lat_epic_pt["y"] - med_epic_pt["y"]) ** 2
-    )
-    view_type = "AP" if epic_sep > w * 0.08 else "LAT"
 
     # QA評価
     if view_type == "AP":

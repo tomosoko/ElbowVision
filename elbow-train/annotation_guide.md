@@ -19,9 +19,12 @@
 ## 側面像でのアノテーション
 
 - **humerus_shaft**: 上腕骨後方皮質の上端
-- **lateral_epicondyle**: 小頭（capitulum）の最前方点
-- **medial_epicondyle**: 肘頭（olecranon）の最後方点
+- **lateral_epicondyle**: 外側上顆の最外側点（AP像と同じ骨の点。側面像では上顆が重なって見えるが、外側の膨らみを選ぶ）
+- **medial_epicondyle**: 内側上顆の最後内側点（AP像と同じ骨の点。側面像では後方に張り出した内側上顆の先端）
 - **forearm_shaft**: 橈骨骨幹の遠位端
+
+> **注意**: 側面像では外側上顆と内側上顆は重なって見えるが、小頭（capitulum）や肘頭（olecranon）を代替として使わないこと。
+> AP像・側面像で同じ解剖学的点を一貫してマーキングすることで、モデルが両ビューで整合したキーポイントを学習できる。
 
 ## YOLO ラベル形式
 
