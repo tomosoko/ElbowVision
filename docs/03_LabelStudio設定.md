@@ -3,7 +3,7 @@
 ## インストール
 
 ```bash
-cd /Users/kohei/ElbowVision_Dev
+cd /Users/kohei/Dev/ElbowVision_Dev
 python3 -m venv venv_labelstudio
 source venv_labelstudio/bin/activate
 pip install label-studio
@@ -14,7 +14,7 @@ pip install label-studio
 ## 起動
 
 ```bash
-source /Users/kohei/ElbowVision_Dev/venv_labelstudio/bin/activate
+source /Users/kohei/Dev/ElbowVision_Dev/venv_labelstudio/bin/activate
 label-studio start
 ```
 
@@ -43,7 +43,7 @@ label-studio start
 
 **方法B: フォルダ指定（推奨）**
 1. 「Add Storage」→「Local files」
-2. Absolute local path: `/Users/kohei/ElbowVision_Dev/data/images`
+2. Absolute local path: `/Users/kohei/Dev/ElbowVision_Dev/data/images`
 3. 「Add Storage」→「Sync Storage」
 
 ### Labeling Setup タブ
@@ -124,12 +124,12 @@ cd ~/Downloads
 unzip labelstudio_export_*.zip -d elbow_labels/
 
 # ラベルファイルをプロジェクトに配置
-cp elbow_labels/labels/train/*.txt /Users/kohei/ElbowVision_Dev/data/labels/train/
-cp elbow_labels/labels/val/*.txt   /Users/kohei/ElbowVision_Dev/data/labels/val/
+cp elbow_labels/labels/train/*.txt /Users/kohei/Dev/ElbowVision_Dev/data/labels/train/
+cp elbow_labels/labels/val/*.txt   /Users/kohei/Dev/ElbowVision_Dev/data/labels/val/
 
 # 枚数確認
-ls /Users/kohei/ElbowVision_Dev/data/labels/train/ | wc -l
-ls /Users/kohei/ElbowVision_Dev/data/labels/val/   | wc -l
+ls /Users/kohei/Dev/ElbowVision_Dev/data/labels/train/ | wc -l
+ls /Users/kohei/Dev/ElbowVision_Dev/data/labels/val/   | wc -l
 ```
 
 画像ファイルとラベルファイルの数が一致していればOK。
@@ -139,7 +139,7 @@ ls /Users/kohei/ElbowVision_Dev/data/labels/val/   | wc -l
 ## ラベルファイルの形式確認
 
 ```bash
-cat /Users/kohei/ElbowVision_Dev/data/labels/train/AP_B_001.txt
+cat /Users/kohei/Dev/ElbowVision_Dev/data/labels/train/AP_B_001.txt
 ```
 
 正しい形式（1行）:

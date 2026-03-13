@@ -13,17 +13,20 @@ OsteoVision の train_angle_predictor.py を肘用に移植。
 
   # 保存先: elbow-api/elbow_convnext_best.pth（API が自動で読み込む）
 
-【CSV形式】
-  filename, view_type, carrying_angle, flexion, pronation_sup, varus_valgus
-  AP_001.png, AP, 10.5, 0.0, 2.1, 1.3
-  LAT_001.png, LAT, 0.0, 85.0, 1.5, 0.8
+【CSV形式（dataset_summary.csv または convnext_labels.csv）】
+  filename, split, view_type, rotation_error_deg, flexion_deg, carrying_angle
+  elbow_00000.png, val, AP, -18.38, 170.27, 0.0
+  elbow_00050.png, train, LAT, 5.12, 87.3, 0.0
+
+【出力（convnext_model.py の OUTPUT_DIM=2 と一致）】
+  index 0 — rotation_error_deg: 理想位からの前腕回旋ズレ（°）
+  index 1 — flexion_deg       : 肘屈曲角（°）
 
 【訓練戦略】
   - ImageNet事前学習 ConvNeXt-Small をファインチューニング
   - AP/LAT で有効な出力チャンネルを損失マスクで制御
-    AP  → carrying_angle のみL1損失を計算
-    LAT → flexion のみL1損失を計算
-    pronation_sup・varus_valgus は両方で学習
+    AP  → rotation_error_deg のみL1損失を計算（flexion_deg はマスク=0）
+    LAT → flexion_deg のみL1損失を計算（rotation_error_deg はマスク=0）
   - Early stopping (patience=20)
   - 最良モデルを elbow_convnext_best.pth に保存
 """
@@ -68,21 +71,20 @@ class ElbowDataset(Dataset):
         if self.transform:
             image = self.transform(image)
 
-        # 角度ラベル: [carrying_angle, flexion, pronation_sup, varus_valgus]
+        # ポジショニングラベル: [rotation_error_deg, flexion_deg]
+        #   rotation_error_deg : 理想位からの回旋ズレ量（AP像のみ有効）
+        #   flexion_deg        : 肘屈曲角（LAT像のみ有効）
+        view = str(row.get("view_type", "AP")).upper()
+
         angles = torch.tensor([
-            float(row.get("carrying_angle", 0.0)),
-            float(row.get("flexion", 0.0)),
-            float(row.get("pronation_sup", 0.0)),
-            float(row.get("varus_valgus", 0.0)),
+            float(row.get("rotation_error_deg", 0.0)),
+            float(row.get("flexion_deg", 90.0)),
         ], dtype=torch.float32)
 
         # 損失マスク: AP/LAT で有効なチャンネルだけ1
-        view = str(row.get("view_type", "AP")).upper()
         mask = torch.tensor([
-            1.0 if view == "AP"  else 0.0,  # carrying_angle
-            1.0 if view == "LAT" else 0.0,  # flexion
-            1.0,                             # pronation_sup (両方有効)
-            1.0,                             # varus_valgus  (両方有効)
+            1.0 if view == "AP"  else 0.0,   # rotation_error_deg: AP像のみ
+            1.0 if view == "LAT" else 0.0,   # flexion_deg: LAT像のみ
         ], dtype=torch.float32)
 
         return image, angles, mask

@@ -26,14 +26,13 @@ interface Landmarks {
   humerus_shaft: LandmarkPoint; condyle_center: LandmarkPoint;
   lateral_epicondyle: LandmarkPoint; medial_epicondyle: LandmarkPoint;
   forearm_shaft: LandmarkPoint; forearm_ext: LandmarkPoint;
+  radial_head?: LandmarkPoint; olecranon?: LandmarkPoint;
   angles: ElbowAngles; qa: QAInfo;
 }
 interface SecondOpinion {
-  carrying_angle: number | null;
-  flexion:        number | null;
-  pronation_sup:  number;
-  varus_valgus:   number;
-  model:          string;
+  rotation_error_deg: number | null;  // AP像: ConvNeXt が推定した回旋ズレ量（°）
+  flexion_deg:        number | null;  // LAT像: ConvNeXt が推定した屈曲角（°）
+  model:              string;
 }
 interface EdgeValidation {
   edge_angle:    number | null;
@@ -42,10 +41,24 @@ interface EdgeValidation {
   edge_lines:    number;
   note:          string;
 }
+interface PositioningCorrection {
+  view_type:          string;
+  epic_separation_px: number;
+  epic_ratio:         number;
+  rotation_error:     number;
+  rotation_level:     "good" | "minor" | "major";
+  rotation_advice:    string;
+  flexion_deg:        number | null;
+  flexion_level:      "good" | "minor" | "major" | null;
+  flexion_advice:     string | null;
+  overall_level:      "good" | "minor" | "major";
+  correction_needed:  boolean;
+}
 interface AnalyzeResponse {
   success: boolean;
   landmarks: Landmarks;
   edge_validation: EdgeValidation | null;
+  positioning_correction: PositioningCorrection | null;
   second_opinion: SecondOpinion | null;
   image_size: { width: number; height: number };
 }
@@ -66,13 +79,13 @@ const LANDMARK_COLORS: Record<string, string> = {
   lateral_epicondyle: "#a855f7",
   medial_epicondyle:  "#ec4899",
   forearm_shaft:      "#22c55e",
+  radial_head:        "#facc15",
+  olecranon:          "#f87171",
 };
 const GRADCAM_TARGETS = [
-  { key: "all",         label: "総合" },
-  { key: "carrying",    label: "外反角" },
-  { key: "flexion",     label: "屈曲角" },
-  { key: "pronation",   label: "回内外" },
-  { key: "varus_valgus",label: "内反外反" },
+  { key: "all",      label: "総合" },
+  { key: "rotation", label: "回旋ズレ(AP)" },
+  { key: "flexion",  label: "屈曲角(LAT)" },
 ];
 
 // ─── QA バッジ ─────────────────────────────────────────────────────────────────
@@ -146,29 +159,53 @@ function AngleCard({ title, primary, secondary, unit, label, normalRange, descri
 function LandmarkOverlay({ landmarks, imageWidth, imageHeight }: {
   landmarks: Landmarks; imageWidth: number; imageHeight: number;
 }) {
-  const points = [
+  const corePoints = [
     { key: "humerus_shaft",      pt: landmarks.humerus_shaft },
     { key: "condyle_center",     pt: landmarks.condyle_center },
     { key: "lateral_epicondyle", pt: landmarks.lateral_epicondyle },
     { key: "medial_epicondyle",  pt: landmarks.medial_epicondyle },
     { key: "forearm_shaft",      pt: landmarks.forearm_shaft },
   ];
+  const extra: { key: string; pt: LandmarkPoint }[] = [];
+  if (landmarks.radial_head) extra.push({ key: "radial_head",  pt: landmarks.radial_head });
+  if (landmarks.olecranon)   extra.push({ key: "olecranon",    pt: landmarks.olecranon });
   return (
     <svg className="absolute inset-0 w-full h-full pointer-events-none"
          viewBox={`0 0 ${imageWidth} ${imageHeight}`} preserveAspectRatio="none">
+      {/* 骨軸ライン */}
       <line x1={landmarks.humerus_shaft.x} y1={landmarks.humerus_shaft.y}
             x2={landmarks.condyle_center.x} y2={landmarks.condyle_center.y}
             stroke="#3b82f6" strokeWidth="2" strokeDasharray="6,3" opacity="0.8" />
       <line x1={landmarks.condyle_center.x} y1={landmarks.condyle_center.y}
             x2={landmarks.forearm_ext.x} y2={landmarks.forearm_ext.y}
             stroke="#22c55e" strokeWidth="2" strokeDasharray="6,3" opacity="0.8" />
+      {/* 上顆間ライン */}
       <line x1={landmarks.lateral_epicondyle.x} y1={landmarks.lateral_epicondyle.y}
             x2={landmarks.medial_epicondyle.x}   y2={landmarks.medial_epicondyle.y}
             stroke="#f97316" strokeWidth="2" opacity="0.7" />
-      {points.map(({ key, pt }) => (
+      {/* 橈骨頭 → 顆部中心ライン（前腕回旋の直接指標） */}
+      {landmarks.radial_head && (
+        <line x1={landmarks.condyle_center.x} y1={landmarks.condyle_center.y}
+              x2={landmarks.radial_head.x}     y2={landmarks.radial_head.y}
+              stroke="#facc15" strokeWidth="1.5" strokeDasharray="4,3" opacity="0.6" />
+      )}
+      {/* 肘頭 → 顆部中心ライン（LAT屈曲角） */}
+      {landmarks.olecranon && (
+        <line x1={landmarks.condyle_center.x} y1={landmarks.condyle_center.y}
+              x2={landmarks.olecranon.x}       y2={landmarks.olecranon.y}
+              stroke="#f87171" strokeWidth="1.5" strokeDasharray="4,3" opacity="0.6" />
+      )}
+      {/* コアポイント */}
+      {corePoints.map(({ key, pt }) => (
         <circle key={key} cx={pt.x} cy={pt.y} r="7"
           fill={LANDMARK_COLORS[key] || "#fff"} stroke="white" strokeWidth="2" opacity="0.9" />
       ))}
+      {/* 追加ポイント（radial_head, olecranon）- 菱形 */}
+      {extra.map(({ key, pt }) => {
+        const r = 6;
+        const d = `M ${pt.x} ${pt.y - r} L ${pt.x + r} ${pt.y} L ${pt.x} ${pt.y + r} L ${pt.x - r} ${pt.y} Z`;
+        return <path key={key} d={d} fill={LANDMARK_COLORS[key]} stroke="white" strokeWidth="1.5" opacity="0.9" />;
+      })}
     </svg>
   );
 }
@@ -297,14 +334,22 @@ export default function ElbowVisionPage() {
 
             {analysisResult && (
               <div className="grid grid-cols-3 gap-2">
-                {Object.entries(LANDMARK_COLORS).map(([key, color]) => (
-                  <div key={key} className="flex items-center gap-2 text-xs text-gray-400">
-                    <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: color }} />
-                    <span>{{ humerus_shaft: "上腕骨", condyle_center: "顆部",
-                      lateral_epicondyle: "外側上顆", medial_epicondyle: "内側上顆",
-                      forearm_shaft: "前腕" }[key]}</span>
-                  </div>
-                ))}
+                {(Object.entries(LANDMARK_COLORS) as [string, string][]).map(([key, color]) => {
+                  const label: Record<string, string> = {
+                    humerus_shaft: "上腕骨", condyle_center: "顆部",
+                    lateral_epicondyle: "外側上顆", medial_epicondyle: "内側上顆",
+                    forearm_shaft: "前腕", radial_head: "橈骨頭", olecranon: "肘頭",
+                  };
+                  // radial_head / olecranon は YOLO時のみ存在する
+                  if ((key === "radial_head" || key === "olecranon") &&
+                      !analysisResult.landmarks[key as "radial_head" | "olecranon"]) return null;
+                  return (
+                    <div key={key} className="flex items-center gap-2 text-xs text-gray-400">
+                      <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: color }} />
+                      <span>{label[key] ?? key}</span>
+                    </div>
+                  );
+                })}
               </div>
             )}
 
@@ -341,6 +386,65 @@ export default function ElbowVisionPage() {
                 {/* ── 解析タブ ── */}
                 {activeTab === "analysis" && (
                   <>
+                    {/* ポジショニングガイダンス（最重要・最上部） */}
+                    {analysisResult.positioning_correction && (() => {
+                      const pc = analysisResult.positioning_correction!;
+                      const bgMap = {
+                        good:  "bg-green-950 border-green-700",
+                        minor: "bg-yellow-950 border-yellow-700",
+                        major: "bg-red-950 border-red-700",
+                      };
+                      const titleColor = { good: "text-green-300", minor: "text-yellow-300", major: "text-red-300" };
+                      const badge = { good: "良好", minor: "要調整", major: "要再撮影" };
+                      const badgeBg = { good: "bg-green-800 text-green-200", minor: "bg-yellow-800 text-yellow-200", major: "bg-red-800 text-red-200" };
+                      return (
+                        <div className={`rounded-xl border-2 p-4 ${bgMap[pc.overall_level]}`}>
+                          <div className="flex items-center justify-between mb-3">
+                            <h3 className={`font-bold text-sm ${titleColor[pc.overall_level]}`}>
+                              ポジショニングガイダンス
+                            </h3>
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${badgeBg[pc.overall_level]}`}>
+                              {badge[pc.overall_level]}
+                            </span>
+                          </div>
+
+                          {/* 回旋ズレ */}
+                          <div className={`rounded-lg p-3 mb-2 ${
+                            pc.rotation_level === "good" ? "bg-green-900/30" :
+                            pc.rotation_level === "minor" ? "bg-yellow-900/30" : "bg-red-900/30"
+                          }`}>
+                            <div className="flex items-center gap-2 text-xs font-semibold mb-1">
+                              <span>{pc.rotation_level === "good" ? "✓" : pc.rotation_level === "minor" ? "△" : "✗"}</span>
+                              <span className="text-gray-300">回旋位置</span>
+                              {pc.rotation_error > 0 && (
+                                <span className="ml-auto font-mono text-white">理想位から約{pc.rotation_error}°ズレ</span>
+                              )}
+                            </div>
+                            <p className="text-xs text-gray-200">{pc.rotation_advice}</p>
+                          </div>
+
+                          {/* 屈曲角（LAT像のみ） */}
+                          {pc.flexion_deg !== null && pc.flexion_advice && (
+                            <div className={`rounded-lg p-3 ${
+                              pc.flexion_level === "good" ? "bg-green-900/30" :
+                              pc.flexion_level === "minor" ? "bg-yellow-900/30" : "bg-red-900/30"
+                            }`}>
+                              <div className="flex items-center gap-2 text-xs font-semibold mb-1">
+                                <span>{pc.flexion_level === "good" ? "✓" : pc.flexion_level === "minor" ? "△" : "✗"}</span>
+                                <span className="text-gray-300">屈曲角</span>
+                                <span className="ml-auto font-mono text-white">{pc.flexion_deg}°（目標: 90°）</span>
+                              </div>
+                              <p className="text-xs text-gray-200">{pc.flexion_advice}</p>
+                            </div>
+                          )}
+
+                          <p className="text-xs text-gray-600 mt-2">
+                            外顆間距離: {pc.epic_separation_px}px（体格比: {pc.epic_ratio}）
+                          </p>
+                        </div>
+                      );
+                    })()}
+
                     <QABadge qa={analysisResult.landmarks.qa} />
 
                     {/* エッジバリデーション */}
@@ -367,38 +471,64 @@ export default function ElbowVisionPage() {
                     })()}
 
                     {/* ConvNeXt モデル説明バナー */}
-                    {so && (
-                      <div className="bg-purple-950/40 border border-purple-800 rounded-lg px-3 py-2 text-xs text-purple-300 flex items-center gap-2">
-                        <span className="text-purple-400 font-bold">ConvNeXt</span>
-                        セカンドオピニオン有効 — 各カードに紫色で表示
-                      </div>
-                    )}
                     {!so && (
                       <div className="bg-gray-900/40 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-500 flex items-center gap-2">
-                        <span>ConvNeXt:</span> モデル未訓練（セカンドオピニオン無効）
+                        <span>ConvNeXt:</span> モデル未訓練（ポジショニングズレ推定無効）
                       </div>
                     )}
 
                     <div className="grid grid-cols-2 gap-3">
                       <AngleCard title="外反角（Carrying Angle）" unit="°"
                         primary={analysisResult.landmarks.angles.carrying_angle}
-                        secondary={so?.carrying_angle}
                         normalRange="5〜15°" description="AP像: 上腕骨軸と前腕骨軸の角度" />
                       <AngleCard title="屈曲角（Flexion）" unit="°"
                         primary={analysisResult.landmarks.angles.flexion}
-                        secondary={so?.flexion}
                         normalRange="0〜150°" description="側面像: 伸展0° / 完全屈曲150°" />
                       <AngleCard title="回内外（Pronation/Supination）" unit="°"
                         primary={analysisResult.landmarks.angles.pronation_sup}
-                        secondary={so?.pronation_sup}
                         label={analysisResult.landmarks.angles.ps_label}
                         normalRange="回内80° / 回外85°" />
                       <AngleCard title="内反外反（Varus/Valgus）" unit="°"
                         primary={analysisResult.landmarks.angles.varus_valgus}
-                        secondary={so?.varus_valgus}
                         label={analysisResult.landmarks.angles.vv_label}
                         normalRange="正常: 0〜2°" />
                     </div>
+
+                    {/* ConvNeXt ポジショニングズレ量 */}
+                    {so && (
+                      <div className="bg-purple-950/40 border border-purple-700 rounded-xl p-4">
+                        <h3 className="text-sm font-semibold text-purple-300 mb-3 flex items-center gap-2">
+                          <span className="text-purple-400">◈</span>
+                          ConvNeXt ポジショニングズレ推定
+                        </h3>
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          {so.rotation_error_deg !== null && (
+                            <div className="bg-purple-900/30 rounded-lg p-3">
+                              <div className="text-gray-400 text-xs mb-1">回旋ズレ量（AP）</div>
+                              <div className="font-mono text-white text-lg font-bold">
+                                {so.rotation_error_deg > 0 ? "+" : ""}{so.rotation_error_deg.toFixed(1)}°
+                              </div>
+                              <div className="text-xs text-gray-400 mt-1">
+                                {Math.abs(so.rotation_error_deg) <= 5 ? "✓ 良好" :
+                                 Math.abs(so.rotation_error_deg) <= 15 ? "△ 軽度ズレ" : "✗ 要補正"}
+                              </div>
+                            </div>
+                          )}
+                          {so.flexion_deg !== null && (
+                            <div className="bg-purple-900/30 rounded-lg p-3">
+                              <div className="text-gray-400 text-xs mb-1">屈曲角（LAT）</div>
+                              <div className="font-mono text-white text-lg font-bold">
+                                {so.flexion_deg.toFixed(1)}°
+                              </div>
+                              <div className="text-xs text-gray-400 mt-1">
+                                {Math.abs(so.flexion_deg - 90) <= 10 ? "✓ 良好（目標: 90°）" :
+                                 Math.abs(so.flexion_deg - 90) <= 20 ? "△ 軽度ズレ" : "✗ 要補正"}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
 
                     {/* ランドマーク座標テーブル */}
                     <div className="bg-gray-900 rounded-xl border border-gray-700 p-4">
@@ -414,14 +544,18 @@ export default function ElbowVisionPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {(["humerus_shaft","condyle_center","lateral_epicondyle","medial_epicondyle","forearm_shaft"] as const).map(key => {
+                          {(["humerus_shaft","condyle_center","lateral_epicondyle","medial_epicondyle","forearm_shaft","radial_head","olecranon"] as const).map(key => {
                             const pt = analysisResult.landmarks[key];
+                            if (!pt) return null;
+                            const label: Record<string, string> = {
+                              humerus_shaft: "上腕骨", condyle_center: "顆部中心",
+                              lateral_epicondyle: "外側上顆", medial_epicondyle: "内側上顆",
+                              forearm_shaft: "前腕骨", radial_head: "橈骨頭", olecranon: "肘頭",
+                            };
                             return (
                               <tr key={key} className="border-b border-gray-800">
                                 <td className="py-1.5" style={{ color: LANDMARK_COLORS[key] }}>
-                                  {{ humerus_shaft: "上腕骨", condyle_center: "顆部中心",
-                                     lateral_epicondyle: "外側上顆", medial_epicondyle: "内側上顆",
-                                     forearm_shaft: "前腕骨" }[key]}
+                                  {label[key] ?? key}
                                 </td>
                                 <td className="text-right py-1.5 font-mono">{pt.x}</td>
                                 <td className="text-right py-1.5 font-mono">{pt.y}</td>

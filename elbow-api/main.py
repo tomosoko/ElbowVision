@@ -43,19 +43,22 @@ if YOLO_INSTALLED and os.path.exists(YOLO_MODEL_PATH):
 else:
     print("YOLOv8 Pose model not found. Falling back to Classical CV.")
 
-# ─── ConvNeXt 角度回帰モデル + Grad-CAM（セカンドオピニオン） ────────────────
+# ─── ConvNeXt ポジショニングズレ回帰モデル + Grad-CAM（セカンドオピニオン） ──
 
 try:
     import torch
     import torch.nn as nn
-    from torchvision import models, transforms
+    from torchvision import transforms
     from PIL import Image
+    # 訓練スクリプトと同一モデル定義を共有（Single Source of Truth）
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "training"))
+    from convnext_model import ElbowConvNeXt
     TORCH_INSTALLED = True
 except ImportError:
     TORCH_INSTALLED = False
 
-# 出力: [carrying_angle, flexion, pronation_sup, varus_valgus]
-CONVNEXT_OUTPUT_DIM = 4
+# 出力: [rotation_error_deg, flexion_deg]
 CONVNEXT_MODEL_PATH = "elbow_convnext_best.pth"
 
 convnext_model = None
@@ -68,33 +71,13 @@ if TORCH_INSTALLED:
         else "cpu"
     )
 
-    class ElbowConvNeXt(nn.Module):
-        """
-        ConvNeXt-Small バックボーンによる肘関節角度回帰モデル。
-        出力: [carrying_angle, flexion, pronation_sup, varus_valgus]
-        AP像では carrying_angle のみ有効、LAT像では flexion のみ有効。
-        """
-        def __init__(self):
-            super().__init__()
-            self.backbone = models.convnext_small(weights=None)
-            in_features = self.backbone.classifier[2].in_features
-            self.backbone.classifier[2] = nn.Sequential(
-                nn.Dropout(0.3),
-                nn.Linear(in_features, 128),
-                nn.GELU(),
-                nn.Linear(128, CONVNEXT_OUTPUT_DIM),
-            )
-
-        def forward(self, x):
-            return self.backbone(x)
-
     if os.path.exists(CONVNEXT_MODEL_PATH):
         try:
-            convnext_model = ElbowConvNeXt()
+            convnext_model = ElbowConvNeXt(pretrained=False)
             convnext_model.load_state_dict(torch.load(CONVNEXT_MODEL_PATH, map_location=device))
             convnext_model.to(device)
             convnext_model.eval()
-            print(f"Loaded ConvNeXt Angle Regressor on {device}.")
+            print(f"Loaded ConvNeXt Positioning Regressor on {device}.")
         except Exception as e:
             print(f"Failed to load ConvNeXt model: {e}")
     else:
@@ -132,7 +115,7 @@ class GradCAM:
     def generate(self, img_tensor: "torch.Tensor", target_idx: Optional[int] = None) -> np.ndarray:
         """
         Grad-CAMヒートマップを生成（0〜1正規化）。
-        target_idx: None=全出力の和, 0=carrying, 1=flexion, 2=pronation, 3=varus_valgus
+        target_idx: None=全出力の和, 0=rotation_error_deg(AP), 1=flexion_deg(LAT)
         """
         self.model.eval()
         t = img_tensor.unsqueeze(0).to(device)
@@ -213,6 +196,114 @@ def angle_deg(p1, p2):
 def full_angle(a1, a2):
     diff = abs(a1 - a2) % 360
     return 360 - diff if diff > 180 else diff
+
+
+# ─── ポジショニング補正推定 ────────────────────────────────────────────────────
+def estimate_positioning_correction(image_array: np.ndarray, landmarks: dict) -> dict:
+    """
+    外顆間距離（体格指標）と屈曲角から、理想ポジショニングへの補正量を推定する。
+    放射線技師が実際に行う操作（発泡スチロールで高さ調整・前腕回旋等）に合わせたアドバイスを生成。
+
+    AP像: 外顆間距離が大きい = 良好な回外位
+    LAT像: 外顆間距離≈0 かつ 屈曲90° = 理想側面位
+
+    戻り値:
+      view_type              : AP / LAT
+      epic_separation_px     : 内外側上顆間の距離（体格指標）
+      epic_ratio             : 外顆間距離 / 画像対角線
+      rotation_error         : 理想位からの回旋ズレ量（°）
+      rotation_level         : "good" / "minor" / "major"
+      rotation_advice        : 回旋補正の実践的アドバイス
+      flexion_deg            : 検出された屈曲角（LAT像のみ）
+      flexion_level          : "good" / "minor" / "major"（LAT像のみ）
+      flexion_advice         : 屈曲角補正の実践的アドバイス（LAT像のみ）
+      overall_level          : 総合判定（rotation/flexionの悪い方）
+      correction_needed      : 補正が必要かどうか
+    """
+    h, w = image_array.shape[:2]
+    diagonal = math.sqrt(h ** 2 + w ** 2)
+
+    lat_epic  = landmarks["lateral_epicondyle"]
+    med_epic  = landmarks["medial_epicondyle"]
+    view_type = landmarks["qa"]["view_type"]
+    angles    = landmarks["angles"]
+
+    epic_sep   = math.sqrt((lat_epic["x"] - med_epic["x"]) ** 2 + (lat_epic["y"] - med_epic["y"]) ** 2)
+    epic_ratio = epic_sep / max(diagonal, 1.0)
+
+    # ── 回旋ズレ評価 ──────────────────────────────────────────────────────────
+    if view_type == "AP":
+        # AP像: 外顆間距離 大 = 回外位良好
+        if epic_ratio >= 0.10:
+            rotation_error, rotation_level = 0.0, "good"
+            rotation_advice = "回外位が適切です。手のひらが上を向いた状態を維持してください。"
+        elif epic_ratio >= 0.05:
+            deficit        = (0.10 - epic_ratio) / 0.05
+            rotation_error = round(deficit * 25.0, 1)
+            rotation_level = "minor"
+            rotation_advice = (f"前腕をもう少し回外してください（手のひらをさらに上に向ける）。"
+                               f"推定ズレ: 約{rotation_error:.0f}°。")
+        else:
+            rotation_error = round(min((0.10 - epic_ratio) / 0.10 * 45.0, 45.0), 1)
+            rotation_level = "major"
+            rotation_advice = (f"前腕が大きく回内しています。手のひらが完全に上を向くよう"
+                               f"腕全体を回外してください（推定ズレ: 約{rotation_error:.0f}°）。再撮影推奨。")
+    else:  # LAT
+        # LAT像: 外顆間距離≈0 = 上顆が重なる = 良好
+        if epic_ratio < 0.04:
+            rotation_error, rotation_level = 0.0, "good"
+            rotation_advice = "内外側上顆が重なっています。回旋位置は適切です。"
+        elif epic_ratio < 0.10:
+            rotation_error = round(epic_ratio / 0.10 * 20.0, 1)
+            rotation_level = "minor"
+            rotation_advice = (f"上顆が少しズレています（推定{rotation_error:.0f}°）。"
+                               f"前腕を内側に少し回旋させるか、肘の位置を微調整してください。")
+        else:
+            rotation_error = round(min(epic_ratio / 0.10 * 20.0, 45.0), 1)
+            rotation_level = "major"
+            rotation_advice = (f"上顆が大きくズレています（推定{rotation_error:.0f}°）。"
+                               f"肘の下に発泡スチロール等を置いて高さを調整し、"
+                               f"前腕を内側に回旋させて上顆が重なるようにしてください。再撮影推奨。")
+
+    # ── 屈曲角評価（LAT像のみ） ───────────────────────────────────────────────
+    flexion_deg    = angles.get("flexion")
+    flexion_level  = None
+    flexion_advice = None
+
+    if view_type == "LAT" and flexion_deg is not None:
+        if 80.0 <= flexion_deg <= 100.0:
+            flexion_level  = "good"
+            flexion_advice = f"屈曲角良好（{flexion_deg:.1f}°）。90°に近い適切な位置です。"
+        elif flexion_deg < 80.0:
+            dev = round(90.0 - flexion_deg, 1)
+            flexion_level  = "major" if flexion_deg < 70.0 else "minor"
+            flexion_advice = (f"肘の屈曲が浅すぎます（{flexion_deg:.1f}°）。"
+                              f"肘の下に台（発泡スチロール等）を置いて高さを出し、"
+                              f"肘をもう約{dev:.0f}°曲げてください。")
+        else:
+            dev = round(flexion_deg - 90.0, 1)
+            flexion_level  = "major" if flexion_deg > 110.0 else "minor"
+            flexion_advice = (f"肘の屈曲が深すぎます（{flexion_deg:.1f}°）。"
+                              f"前腕を少し下げて約{dev:.0f}°伸ばし、90°に近づけてください。")
+
+    # ── 総合判定 ──────────────────────────────────────────────────────────────
+    level_order = {"good": 0, "minor": 1, "major": 2, None: 0}
+    overall_level = max(rotation_level, flexion_level or "good", key=lambda x: level_order[x])
+    correction_needed = overall_level != "good"
+
+    return {
+        "view_type":        view_type,
+        "epic_separation_px": round(epic_sep, 1),
+        "epic_ratio":       round(epic_ratio, 4),
+        "rotation_error":   rotation_error,
+        "rotation_level":   rotation_level,
+        "rotation_advice":  rotation_advice,
+        "flexion_deg":      round(flexion_deg, 1) if flexion_deg is not None else None,
+        "flexion_level":    flexion_level,
+        "flexion_advice":   flexion_advice,
+        "overall_level":    overall_level,
+        "correction_needed": correction_needed,
+    }
 
 
 # ─── エッジバリデーション ──────────────────────────────────────────────────────
@@ -307,11 +398,13 @@ def validate_angle_with_edges(image_array: np.ndarray, primary_angle: float) -> 
 # ─── YOLOv8-Pose 推論（プライマリ） ───────────────────────────────────────────
 def detect_with_yolo_pose(image_array: np.ndarray) -> Optional[dict]:
     """
-    キーポイント順:
-      0: humerus_shaft    — 上腕骨幹部（近位）
+    キーポイント順（6点）:
+      0: humerus_shaft      — 上腕骨幹部（近位）
       1: lateral_epicondyle — 外側上顆
       2: medial_epicondyle  — 内側上顆
-      3: forearm_shaft    — 前腕骨幹部（遠位）
+      3: forearm_shaft      — 前腕骨幹部（遠位）
+      4: radial_head        — 橈骨頭（前腕回旋の直接指標）
+      5: olecranon          — 肘頭（LAT屈曲角・AP/LAT判定に使用）
     """
     if yolo_model is None:
         return None
@@ -327,23 +420,27 @@ def detect_with_yolo_pose(image_array: np.ndarray) -> Optional[dict]:
             return None
 
         kpts  = result.keypoints.xy[0].cpu().numpy()
-        confs = result.keypoints.conf[0].cpu().numpy() if result.keypoints.conf is not None else np.ones(4)
+        confs = result.keypoints.conf[0].cpu().numpy() if result.keypoints.conf is not None else np.ones(6)
 
-        if len(kpts) < 4:
+        if len(kpts) < 6:
             return None
 
-        humerus_pt  = {"x": float(kpts[0][0]), "y": float(kpts[0][1])}
-        lat_epic_pt = {"x": float(kpts[1][0]), "y": float(kpts[1][1])}
-        med_epic_pt = {"x": float(kpts[2][0]), "y": float(kpts[2][1])}
-        forearm_pt  = {"x": float(kpts[3][0]), "y": float(kpts[3][1])}
+        humerus_pt   = {"x": float(kpts[0][0]), "y": float(kpts[0][1])}
+        lat_epic_pt  = {"x": float(kpts[1][0]), "y": float(kpts[1][1])}
+        med_epic_pt  = {"x": float(kpts[2][0]), "y": float(kpts[2][1])}
+        forearm_pt   = {"x": float(kpts[3][0]), "y": float(kpts[3][1])}
+        radial_pt    = {"x": float(kpts[4][0]), "y": float(kpts[4][1])}
+        olecranon_pt = {"x": float(kpts[5][0]), "y": float(kpts[5][1])}
 
         condyle_mid = {
             "x": (lat_epic_pt["x"] + med_epic_pt["x"]) / 2,
             "y": (lat_epic_pt["y"] + med_epic_pt["y"]) / 2,
         }
 
-        epic_sep  = math.sqrt((lat_epic_pt["x"] - med_epic_pt["x"])**2 + (lat_epic_pt["y"] - med_epic_pt["y"])**2)
-        view_type = "AP" if epic_sep > w * 0.08 else "LAT"
+        # AP/LAT判定: 上顆間距離 + 肘頭位置（後方突出）の2指標で判定
+        epic_sep = math.sqrt((lat_epic_pt["x"] - med_epic_pt["x"])**2 + (lat_epic_pt["y"] - med_epic_pt["y"])**2)
+        olecranon_posterior = olecranon_pt["y"] > condyle_mid["y"] + h * 0.03
+        view_type = "AP" if (epic_sep > w * 0.06 and not olecranon_posterior) else "LAT"
 
         humerus_axis_angle = angle_deg(humerus_pt, condyle_mid)
         forearm_axis_angle = angle_deg(condyle_mid, forearm_pt)
@@ -352,16 +449,15 @@ def detect_with_yolo_pose(image_array: np.ndarray) -> Optional[dict]:
         if view_type == "AP":
             carrying_angle, flexion = joint_angle, None
         else:
-            flexion, carrying_angle = joint_angle, None
+            # LAT像: olecranon-condyle-radial_head の三点角度で屈曲角を計算
+            ol_angle = angle_deg(olecranon_pt, condyle_mid)
+            rh_angle = angle_deg(condyle_mid, radial_pt)
+            flexion  = round(full_angle(ol_angle, rh_angle), 1)
+            carrying_angle = None
 
-        shaft_midx = (humerus_pt["x"] + forearm_pt["x"]) / 2
-        lat_offset = lat_epic_pt["x"] - shaft_midx
-        med_offset = med_epic_pt["x"] - shaft_midx
-        if abs(lat_offset) + abs(med_offset) > 1e-3:
-            asymmetry = (abs(lat_offset) - abs(med_offset)) / (abs(lat_offset) + abs(med_offset))
-        else:
-            asymmetry = 0.0
-        pronation_sup = round(max(-30.0, min(30.0, asymmetry * 30.0)), 1)
+        # 前腕回旋: radial_head の condyle_mid からのML方向ズレで定量化
+        radial_offset = radial_pt["x"] - condyle_mid["x"]
+        pronation_sup = round(max(-30.0, min(30.0, -radial_offset / max(w * 0.01, 1e-3))), 1)
         ps_label = "回内 (Pronation)" if pronation_sup > 2 else ("回外 (Supination)" if pronation_sup < -2 else "中立 (Neutral)")
 
         condyle_tilt = angle_deg(med_epic_pt, lat_epic_pt)
@@ -398,6 +494,8 @@ def detect_with_yolo_pose(image_array: np.ndarray) -> Optional[dict]:
             "medial_epicondyle":  {"x": int(med_epic_pt["x"]),   "y": int(med_epic_pt["y"]),   "x_pct": pct(med_epic_pt["x"], w),   "y_pct": pct(med_epic_pt["y"], h)},
             "forearm_shaft":      {"x": int(forearm_pt["x"]),    "y": int(forearm_pt["y"]),    "x_pct": pct(forearm_pt["x"], w),    "y_pct": pct(forearm_pt["y"], h)},
             "forearm_ext":        {"x": int(forearm_ext["x"]),   "y": int(forearm_ext["y"]),   "x_pct": pct(forearm_ext["x"], w),   "y_pct": pct(forearm_ext["y"], h)},
+            "radial_head":        {"x": int(radial_pt["x"]),     "y": int(radial_pt["y"]),     "x_pct": pct(radial_pt["x"], w),     "y_pct": pct(radial_pt["y"], h)},
+            "olecranon":          {"x": int(olecranon_pt["x"]),  "y": int(olecranon_pt["y"]),  "x_pct": pct(olecranon_pt["x"], w),  "y_pct": pct(olecranon_pt["y"], h)},
             "qa": {
                 "view_type": view_type, "score": qa_score, "status": qa_status,
                 "message": qa_msg, "color": qa_color, "symmetry_ratio": 1.0,
@@ -645,7 +743,10 @@ async def analyze_elbow(file: UploadFile = File(...)):
         if primary_angle is not None:
             edge_validation = validate_angle_with_edges(image_array, primary_angle)
 
-        # ConvNeXt セカンドオピニオン
+        # ポジショニング補正推定（外顆間距離 × 体格）
+        positioning_correction = estimate_positioning_correction(image_array, landmarks)
+
+        # ConvNeXt セカンドオピニオン（ポジショニングズレ量推定）
         second_opinion = None
         if TORCH_INSTALLED and convnext_model is not None:
             try:
@@ -655,11 +756,10 @@ async def analyze_elbow(file: UploadFile = File(...)):
                 with torch.no_grad():
                     pred = convnext_model(img_tensor.unsqueeze(0))[0].cpu().numpy()
                 view = landmarks["qa"]["view_type"]
+                # pred[0]=rotation_error_deg, pred[1]=flexion_deg
                 second_opinion = {
-                    "carrying_angle": round(float(pred[0]), 1) if view == "AP"  else None,
-                    "flexion":        round(float(pred[1]), 1) if view == "LAT" else None,
-                    "pronation_sup":  round(float(pred[2]), 1),
-                    "varus_valgus":   round(float(pred[3]), 1),
+                    "rotation_error_deg": round(float(pred[0]), 1) if view == "AP"  else None,
+                    "flexion_deg":        round(float(pred[1]), 1) if view == "LAT" else None,
                     "model": "ConvNeXt-Small",
                 }
             except Exception as e:
@@ -669,6 +769,7 @@ async def analyze_elbow(file: UploadFile = File(...)):
             "success": True,
             "landmarks": landmarks,
             "edge_validation": edge_validation,
+            "positioning_correction": positioning_correction,
             "second_opinion": second_opinion,
             "image_size": {"width": image_array.shape[1], "height": image_array.shape[0]},
         })
@@ -682,7 +783,7 @@ async def analyze_elbow(file: UploadFile = File(...)):
 async def gradcam_endpoint(file: UploadFile = File(...), target: str = "all"):
     """
     Grad-CAM XAI エンドポイント（ConvNeXt-Small）。
-    target: "all" | "carrying" | "flexion" | "pronation" | "varus_valgus"
+    target: "all" | "rotation"（回旋ズレ AP）| "flexion"（屈曲角 LAT）
     """
     if gradcam_engine is None or convnext_model is None:
         return JSONResponse(content={
@@ -701,7 +802,7 @@ async def gradcam_endpoint(file: UploadFile = File(...), target: str = "all"):
         pil_img = Image.fromarray(image_rgb)
         img_tensor = convnext_transforms(pil_img).to(device)
 
-        target_map = {"all": None, "carrying": 0, "flexion": 1, "pronation": 2, "varus_valgus": 3}
+        target_map = {"all": None, "rotation": 0, "flexion": 1}
         target_idx = target_map.get(target.lower())
 
         cam = gradcam_engine.generate(img_tensor, target_idx=target_idx)
@@ -711,10 +812,8 @@ async def gradcam_endpoint(file: UploadFile = File(...), target: str = "all"):
             pred = convnext_model(img_tensor.unsqueeze(0))[0].cpu().numpy()
 
         predicted_angles = {
-            "外反角":  round(float(pred[0]), 1),
-            "屈曲角":  round(float(pred[1]), 1),
-            "回内外":  round(float(pred[2]), 1),
-            "内反外反": round(float(pred[3]), 1),
+            "回旋ズレ(AP)": round(float(pred[0]), 1),
+            "屈曲角(LAT)":  round(float(pred[1]), 1),
         }
 
         overlay = apply_gradcam_overlay(image_bgr, cam, alpha=0.45)
