@@ -1,31 +1,42 @@
+# Mac
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor
+.vscode/
+*.swp
+*.swo
+~$*
+
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
 .Python
+venv/
+.venv/
 *.egg-info/
 dist/
 build/
-venv/
-.venv/
-.env
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
 
 # Node
 node_modules/
+npm-debug.log*
 .next/
-.vercel/
+out/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
 *.log
-
-# ML モデル
-*.pt
-*.pth
-runs/
-
-# データ
-data/images/
-data/labels/
-
-# macOS
-.DS_Store
-*.swp
