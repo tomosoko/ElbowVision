@@ -44,5 +44,5 @@ if __name__ == "__main__":
     model = ElbowConvNeXt(pretrained=False)
     x = torch.randn(2, 3, 224, 224)
     out = model(x)
-    print(f"出力shape: {out.shape}")   # → (2, 4)
+    print(f"出力shape: {out.shape}")   # → (2, 2)
     print(f"出力例:    {out[0].detach().numpy()}")
