@@ -40,3 +40,8 @@ out/
 
 # Logs
 *.log
+
+# ML Models（大容量・git管理外）
+*.pt
+*.pth
+*.onnx
