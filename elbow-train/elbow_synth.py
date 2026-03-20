@@ -515,7 +515,13 @@ def rotate_volume_and_landmarks(
       rotated_landmarks: 回転後のキーポイント座標（正規化）
     """
     pd, ap, ml = volume.shape
-    center = np.array([pd / 2, ap / 2, ml / 2])
+
+    # 回転軸: joint_center（解剖学的関節中心）を優先。なければボリューム中心にフォールバック
+    if "joint_center" in landmarks_norm:
+        jc = landmarks_norm["joint_center"]
+        center = np.array([jc[0] * pd, jc[1] * ap, jc[2] * ml])
+    else:
+        center = np.array([pd / 2, ap / 2, ml / 2])
 
     # 前腕長軸(PD=axis0)まわりの前腕回旋
     R_rot  = rotation_matrix_x(forearm_rotation_deg)
