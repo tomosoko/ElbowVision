@@ -308,7 +308,7 @@ CT_001,CT,Axial,-,-,100,70,-,-,1mm/0.8mm/FC43
 ### ディレクトリ構成
 
 ```
-ElbowVision_Dev/
+ElbowVision/
 └── data/
     ├── raw_dicom/          ← 撮影DICOMをここに保存（バックアップ必須）
     │   ├── xray/           ← 単純X線
@@ -329,7 +329,7 @@ ElbowVision_Dev/
 ### DICOM → PNG 変換コマンド
 
 ```bash
-cd /Users/kohei/Dev/ElbowVision_Dev
+cd /Users/kohei/Dev/vision/ElbowVision
 
 # 単純X線DICOMを変換（CLAHE強調あり・512px・train/val自動分割）
 python elbow-train/dicom_to_png.py \

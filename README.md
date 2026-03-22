@@ -11,7 +11,7 @@
 ## 構成
 
 ```
-ElbowVision_Dev/
+ElbowVision/
 ├── elbow-api/       # FastAPI バックエンド
 ├── elbow-frontend/  # Next.js フロントエンド
 ├── elbow-train/     # YOLOv8 学習スクリプト

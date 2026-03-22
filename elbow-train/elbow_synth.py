@@ -28,7 +28,7 @@ OsteoVision の OsteoSynth/yolo_pose_factory.py を肘用に移植。
   - これからのズレ量を訓練ラベルとして使用
 
 【使い方（複数シリーズ・ファントム対応）】
-  cd /Users/kohei/Dev/ElbowVision_Dev
+  cd /Users/kohei/Dev/vision/ElbowVision
   source elbow-api/venv/bin/activate
 
   # 単一CTシリーズ

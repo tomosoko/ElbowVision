@@ -1,7 +1,7 @@
-path: /Users/kohei/Dev/ElbowVision_Dev/data/yolo_dataset
+path: /Users/kohei/Dev/vision/ElbowVision/data/yolo_dataset
 train: images/train
 val: images/val
 nc: 1
 names: [elbow_joint]
-kpt_shape: [4, 3]
-flip_idx: [0, 2, 1, 3]
+kpt_shape: [6, 3]
+flip_idx: [0, 2, 1, 3, 4, 5]
