@@ -17,9 +17,9 @@ CSV形式（ヘッダー必須）:
 import argparse
 import os
 import numpy as np
-import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 OUTPUT_DIR = "validation_output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
