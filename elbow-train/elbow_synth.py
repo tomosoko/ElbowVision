@@ -426,14 +426,21 @@ def generate_drr(volume: np.ndarray, axis: str = "AP",
     """
     正準方向ボリュームから透視投影（コーンビーム）DRRを生成する。
 
+    【Beer-Lambert指数減衰モデル】
+      実際のX線はI = I_0 * exp(-∫μ(x)dx) で減衰する。
+      CTの正規化値（0〜1）をμ（線減弱係数）として扱い、
+      指数減衰で透過強度を計算 → 実X線に近い濃淡を再現。
+
+      骨（高μ）: 白く映る（X線が透過しにくい）
+      軟部組織（低μ）: 暗く映る
+      空気（μ≈0）: 黒
+
     axis:
       "AP"  — 前後方向投影（正面像）: AP方向(axis1)に透視投影
       "LAT" — 内外側方向投影（側面像）: ML方向(axis2)に透視投影
 
     sid_mm  : X線管焦点〜検出器間距離（mm）。実撮影条件に合わせる（デフォルト 1000mm）
     voxel_mm: 正準ボリュームの実効ボクセルサイズ（mm/voxel）
-
-    メモリ使用量: H×W×D × float32 × 5配列 ≈ 128^3 × 4 × 5 ≈ 40MB（target_size=128 時）
 
     戻り値: (H, W) uint8 画像
     """
@@ -442,48 +449,92 @@ def generate_drr(volume: np.ndarray, axis: str = "AP",
     NP, NA, NM = volume.shape
 
     if axis == "AP":
-        # AP軸(axis1)に透視投影 → 画像 (PD=H, ML=W)、投影深度 D=NA
         H, W, D = NP, NM, NA
     else:
-        # ML軸(axis2)に透視投影 → 画像 (PD=H, AP=W)、投影深度 D=NM
         H, W, D = NP, NA, NM
 
     SID_vox = sid_mm / voxel_mm
-    D_s = max(SID_vox - D, 1.0)      # ソース〜ボリューム前端の距離（voxels）
+    D_s = max(SID_vox - D, 1.0)
 
     # 検出器グリッド (H, W)
     hh, ww = np.meshgrid(np.arange(H, dtype=np.float32),
                           np.arange(W, dtype=np.float32), indexing='ij')
 
-    # 各深度スライスの逆倍率 (D,): 検出器座標 → volume 座標のスケール係数
-    # inv_m[d] = (D_s + d) / SID_vox
     d_vals = np.arange(D, dtype=np.float32)
-    inv_m  = (D_s + d_vals) / SID_vox   # (D,)
+    inv_m  = (D_s + d_vals) / SID_vox
 
-    # 全サンプリング座標を一括計算 (H, W, D)
-    inv_m3 = inv_m[None, None, :]                                  # (1, 1, D)
-    h_vol  = H / 2.0 + (hh[:, :, None] - H / 2.0) * inv_m3       # (H, W, D)
-    w_vol  = W / 2.0 + (ww[:, :, None] - W / 2.0) * inv_m3       # (H, W, D)
-    d_vol  = np.tile(d_vals[None, None, :], (H, W, 1))            # (H, W, D)
+    inv_m3 = inv_m[None, None, :]
+    h_vol  = H / 2.0 + (hh[:, :, None] - H / 2.0) * inv_m3
+    w_vol  = W / 2.0 + (ww[:, :, None] - W / 2.0) * inv_m3
+    d_vol  = np.tile(d_vals[None, None, :], (H, W, 1))
 
-    # volume[PD, AP, ML] に対してサンプリング座標を組み立てる
     if axis == "AP":
-        # axis0=PD(H), axis1=AP(depth d), axis2=ML(W)
         coords = np.stack([h_vol.ravel(), d_vol.ravel(), w_vol.ravel()], axis=0)
     else:
-        # axis0=PD(H), axis1=AP(W), axis2=ML(depth d)
         coords = np.stack([h_vol.ravel(), w_vol.ravel(), d_vol.ravel()], axis=0)
 
     samples = _mc(volume, coords, order=1, mode='constant', cval=0.0)
-    proj = samples.reshape(H, W, D).sum(axis=2).astype(np.float32)
+    mu_volume = samples.reshape(H, W, D)
 
-    # 正規化 → uint8
-    proj = (proj - proj.min()) / (proj.max() - proj.min() + 1e-8)
-    proj = (proj * 255).astype(np.uint8)
+    # ── Beer-Lambert指数減衰 ──
+    # μスケーリング: CT正規化値(0〜1)を実効的な線減弱係数にスケール
+    # 線積分値 = sum(μ) * voxel_mm で、投影深度D個のボクセルを積分する。
+    # 骨(μ≈0.6) × D(≈90) = 54 だと exp(-54)≈0 で真っ白になるため、
+    # voxel_mm ではなく固定の正規化係数を使い、
+    # 線積分値が bone で 2〜4 程度になるよう調整する。
+    line_integral = mu_volume.sum(axis=2)
+    # 正規化: 最大線積分が target_max_attenuation になるようスケール
+    li_max = line_integral.max() + 1e-8
+    target_max_attenuation = 4.0  # 骨で exp(-4)≈0.018、空気で exp(0)=1
+    line_integral = line_integral * (target_max_attenuation / li_max)
+    # I = I_0 * exp(-∫μ dx) → 透過強度
+    transmission = np.exp(-line_integral)
 
-    # CLAHE でコントラスト強調（実X線に近い見た目に）
+    # ── 散乱線シミュレーション（簡易版） ──
+    scatter_fraction = 0.03  # 散乱線割合（3%: 控えめに）
+    intensity = (1.0 - scatter_fraction) * transmission + scatter_fraction
+
+    # ── ヒール効果（X線管からの距離による強度低下の簡易近似） ──
+    cy, cx = H / 2.0, W / 2.0
+    yy, xx = np.meshgrid(np.arange(H, dtype=np.float32),
+                          np.arange(W, dtype=np.float32), indexing='ij')
+    dist_sq = (yy - cy) ** 2 + (xx - cx) ** 2
+    max_dist_sq = cy ** 2 + cx ** 2 + 1e-8
+    heel_effect = 1.0 - 0.05 * (dist_sq / max_dist_sq)
+    intensity = intensity * heel_effect
+
+    # ── X線画像変換（透過→表示） ──
+    # DR(デジタルX線)は骨が白い（反転表示）
+    img = 1.0 - intensity  # 反転: 骨=白, 空気=黒
+
+    # ── 背景マスク（空気部分を完全に黒くする） ──
+    # 線積分がほぼ0の領域（空気のみ通過）は黒にする
+    air_threshold = 0.02  # 反転後にこれ以下は背景
+    bg_mask = img < air_threshold
+
+    # ── ウィンドウ処理（骨のダイナミックレンジに最適化） ──
+    # 背景以外のピクセルで統計を取る
+    fg_pixels = img[~bg_mask]
+    if len(fg_pixels) > 0:
+        p_low = np.percentile(fg_pixels, 2)
+        p_high = np.percentile(fg_pixels, 99.5)
+    else:
+        p_low, p_high = 0.0, 1.0
+    img = np.clip((img - p_low) / (p_high - p_low + 1e-8), 0, 1)
+    img[bg_mask] = 0.0  # 背景は完全黒
+
+    # ── ガンマ補正（レントゲンフィルムの特性曲線を模倣） ──
+    gamma = 0.7  # 骨の濃淡差を強調
+    img = np.power(img + 1e-8, gamma)
+    img[bg_mask] = 0.0
+
+    # ── 軽いガウシアンブラー（X線の焦点ぼけを再現） ──
+    img_u8 = (img * 255).astype(np.uint8)
+    img_u8 = cv2.GaussianBlur(img_u8, (3, 3), 0.5)
+
+    # CLAHE（局所的なコントラスト強調、控えめに）
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    return clahe.apply(proj)
+    return clahe.apply(img_u8)
 
 
 # ─── ボリューム回転 + キーポイント変換 ────────────────────────────────────────
@@ -497,6 +548,14 @@ def rotate_volume_and_landmarks(
 ) -> tuple:
     """
     正準方向ボリュームに対して、前腕回旋と肘屈曲を適用する。
+
+    【解剖学的分離回転】
+      肘の屈曲/伸展は関節中心（joint_center）を境に:
+        - 上腕骨（近位側）: 固定
+        - 前腕骨（遠位側）: joint_center を中心に回転
+      これにより実際の肘関節運動に近いDRRが生成される。
+
+      前腕回旋（pronation/supination）も同様に前腕部分のみに適用。
 
     forearm_rotation_deg:
       理想位からのズレ量（°）。0=理想、+方向=回外、-方向=回内
@@ -516,7 +575,7 @@ def rotate_volume_and_landmarks(
     """
     pd, ap, ml = volume.shape
 
-    # 回転軸: joint_center（解剖学的関節中心）を優先。なければボリューム中心にフォールバック
+    # 回転軸: joint_center（解剖学的関節中心）を優先
     if "joint_center" in landmarks_norm:
         jc = landmarks_norm["joint_center"]
         center = np.array([jc[0] * pd, jc[1] * ap, jc[2] * ml])
@@ -528,27 +587,54 @@ def rotate_volume_and_landmarks(
     # ML軸(axis2)まわりの肘屈曲（CT実ポジションからの差分で回転）
     R_flex = rotation_matrix_z(flexion_deg - base_flexion)
     R = R_flex @ R_rot
-
-    # ボリューム回転（scipy affine_transform: backward mapping）
-    # affine_transform は output[o] = input[M @ o + offset] で動作する。
-    # 「ボリュームをR方向に回転させて見せる」には逆行列 R^-1 を渡す必要がある。
-    # R は直交行列なので R^-1 = R.T
     R_inv = R.T
-    offset = center - R_inv @ center
-    rotated = affine_transform(
-        volume, R_inv, offset=offset, order=1, mode='constant', cval=0.0
+
+    # ── 前腕分離回転: joint_center より遠位（PD > joint_center）だけを回転 ──
+    # 上腕側はそのまま保持し、前腕側だけ関節中心を軸に回転させる
+    joint_pd_vox = int(center[0])  # 関節中心のPDインデックス
+
+    # 遷移帯: 関節中心付近で急にマスクが切れるとアーティファクトが出るため、
+    # ±blend_half ボクセルの範囲でスムーズにブレンドする
+    blend_half = max(2, int(pd * 0.03))  # ボリュームの3%幅
+
+    # 出力ボリューム: 上腕側は元のまま
+    rotated = volume.copy()
+
+    # 前腕部分だけ回転したボリュームを生成
+    offset_forearm = center - R_inv @ center
+    forearm_rotated = affine_transform(
+        volume, R_inv, offset=offset_forearm, order=1, mode='constant', cval=0.0
     )
 
-    # キーポイント座標変換（forward mapping: R でボリュームと同方向に回転）
+    # ブレンドマスク: 0=上腕(元のまま), 1=前腕(回転後)
+    blend_mask = np.zeros(pd, dtype=np.float32)
+    for i in range(pd):
+        if i >= joint_pd_vox + blend_half:
+            blend_mask[i] = 1.0
+        elif i > joint_pd_vox - blend_half:
+            blend_mask[i] = (i - (joint_pd_vox - blend_half)) / (2 * blend_half)
+
+    # 3Dブレンドマスクに拡張して適用
+    blend_3d = blend_mask[:, None, None]  # (PD, 1, 1) → ブロードキャスト
+    rotated = (1.0 - blend_3d) * volume + blend_3d * forearm_rotated
+
+    # キーポイント座標変換
+    # 上腕側ランドマーク（joint_center以上）は固定、前腕側は回転
+    humerus_landmarks = {"humerus_shaft"}
     rotated_lm = {}
     for name, (nPD, nAP, nML) in landmarks_norm.items():
-        p = np.array([nPD * pd, nAP * ap, nML * ml]) - center
-        p_rot = R @ p + center
-        rotated_lm[name] = (
-            p_rot[0] / pd,   # n_PD
-            p_rot[1] / ap,   # n_AP
-            p_rot[2] / ml,   # n_ML
-        )
+        if name in humerus_landmarks:
+            # 上腕側: 固定
+            rotated_lm[name] = (nPD, nAP, nML)
+        else:
+            # 前腕側 + 関節中心付近: 関節中心を軸に回転
+            p = np.array([nPD * pd, nAP * ap, nML * ml]) - center
+            p_rot = R @ p + center
+            rotated_lm[name] = (
+                p_rot[0] / pd,
+                p_rot[1] / ap,
+                p_rot[2] / ml,
+            )
 
     return rotated.astype(np.float32), rotated_lm
 
