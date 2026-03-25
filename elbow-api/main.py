@@ -412,13 +412,15 @@ def validate_angle_with_edges(image_array: np.ndarray, primary_angle: float) -> 
 # ─── YOLOv8-Pose 推論（プライマリ） ───────────────────────────────────────────
 def detect_with_yolo_pose(image_array: np.ndarray) -> Optional[dict]:
     """
-    キーポイント順（6点）:
-      0: humerus_shaft      — 上腕骨幹部（近位）
-      1: lateral_epicondyle — 外側上顆
-      2: medial_epicondyle  — 内側上顆
-      3: forearm_shaft      — 前腕骨幹部（遠位）
-      4: radial_head        — 橈骨頭（前腕回旋の直接指標）
-      5: olecranon          — 肘頭（LAT屈曲角・AP/LAT判定に使用）
+    キーポイント順:
+      必須4点（現行モデル）:
+        0: humerus_shaft      — 上腕骨幹部（近位）
+        1: lateral_epicondyle — 外側上顆
+        2: medial_epicondyle  — 内側上顆
+        3: forearm_shaft      — 前腕骨幹部（遠位）
+      オプション2点（6KPモデル）:
+        4: radial_head        — 橈骨頭（前腕回旋の直接指標）
+        5: olecranon          — 肘頭（LAT屈曲角・AP/LAT判定に使用）
     """
     if yolo_model is None:
         return None
@@ -434,27 +436,34 @@ def detect_with_yolo_pose(image_array: np.ndarray) -> Optional[dict]:
             return None
 
         kpts  = result.keypoints.xy[0].cpu().numpy()
-        confs = result.keypoints.conf[0].cpu().numpy() if result.keypoints.conf is not None else np.ones(6)
+        n_kpts = len(kpts)
+        confs = result.keypoints.conf[0].cpu().numpy() if result.keypoints.conf is not None else np.ones(n_kpts)
 
-        if len(kpts) < 6:
+        if n_kpts < 4:
             return None
 
         humerus_pt   = {"x": float(kpts[0][0]), "y": float(kpts[0][1])}
         lat_epic_pt  = {"x": float(kpts[1][0]), "y": float(kpts[1][1])}
         med_epic_pt  = {"x": float(kpts[2][0]), "y": float(kpts[2][1])}
         forearm_pt   = {"x": float(kpts[3][0]), "y": float(kpts[3][1])}
-        radial_pt    = {"x": float(kpts[4][0]), "y": float(kpts[4][1])}
-        olecranon_pt = {"x": float(kpts[5][0]), "y": float(kpts[5][1])}
+
+        # オプションKP（6KPモデルの場合のみ）
+        radial_pt    = {"x": float(kpts[4][0]), "y": float(kpts[4][1])} if n_kpts >= 5 else None
+        olecranon_pt = {"x": float(kpts[5][0]), "y": float(kpts[5][1])} if n_kpts >= 6 else None
 
         condyle_mid = {
             "x": (lat_epic_pt["x"] + med_epic_pt["x"]) / 2,
             "y": (lat_epic_pt["y"] + med_epic_pt["y"]) / 2,
         }
 
-        # AP/LAT判定: 上顆間距離 + 肘頭位置（後方突出）の2指標で判定
+        # AP/LAT判定: 上顆間距離で判定（olecranonがあれば追加指標）
         epic_sep = math.sqrt((lat_epic_pt["x"] - med_epic_pt["x"])**2 + (lat_epic_pt["y"] - med_epic_pt["y"])**2)
-        olecranon_posterior = olecranon_pt["y"] > condyle_mid["y"] + h * 0.03
-        view_type = "AP" if (epic_sep > w * 0.06 and not olecranon_posterior) else "LAT"
+        if olecranon_pt is not None:
+            olecranon_posterior = olecranon_pt["y"] > condyle_mid["y"] + h * 0.03
+            view_type = "AP" if (epic_sep > w * 0.06 and not olecranon_posterior) else "LAT"
+        else:
+            # 4KPモデル: 上顆間距離のみで判定
+            view_type = "AP" if epic_sep > w * 0.06 else "LAT"
 
         humerus_axis_angle = angle_deg(humerus_pt, condyle_mid)
         forearm_axis_angle = angle_deg(condyle_mid, forearm_pt)
@@ -463,15 +472,22 @@ def detect_with_yolo_pose(image_array: np.ndarray) -> Optional[dict]:
         if view_type == "AP":
             carrying_angle, flexion = joint_angle, None
         else:
-            # LAT像: olecranon-condyle-radial_head の三点角度で屈曲角を計算
-            ol_angle = angle_deg(olecranon_pt, condyle_mid)
-            rh_angle = angle_deg(condyle_mid, radial_pt)
-            flexion  = round(full_angle(ol_angle, rh_angle), 1)
+            if olecranon_pt is not None and radial_pt is not None:
+                # 6KPモデル: olecranon-condyle-radial_head の三点角度で屈曲角
+                ol_angle = angle_deg(olecranon_pt, condyle_mid)
+                rh_angle = angle_deg(condyle_mid, radial_pt)
+                flexion  = round(full_angle(ol_angle, rh_angle), 1)
+            else:
+                # 4KPモデル: humerus-condyle-forearm から屈曲角を推定
+                flexion = joint_angle
             carrying_angle = None
 
-        # 前腕回旋: radial_head の condyle_mid からのML方向ズレで定量化
-        radial_offset = radial_pt["x"] - condyle_mid["x"]
-        pronation_sup = round(max(-30.0, min(30.0, -radial_offset / max(w * 0.01, 1e-3))), 1)
+        # 前腕回旋（radial_headがある場合のみ）
+        if radial_pt is not None:
+            radial_offset = radial_pt["x"] - condyle_mid["x"]
+            pronation_sup = round(max(-30.0, min(30.0, -radial_offset / max(w * 0.01, 1e-3))), 1)
+        else:
+            pronation_sup = 0.0
         ps_label = "回内 (Pronation)" if pronation_sup > 2 else ("回外 (Supination)" if pronation_sup < -2 else "中立 (Neutral)")
 
         condyle_tilt = angle_deg(med_epic_pt, lat_epic_pt)
@@ -508,8 +524,8 @@ def detect_with_yolo_pose(image_array: np.ndarray) -> Optional[dict]:
             "medial_epicondyle":  {"x": int(med_epic_pt["x"]),   "y": int(med_epic_pt["y"]),   "x_pct": pct(med_epic_pt["x"], w),   "y_pct": pct(med_epic_pt["y"], h)},
             "forearm_shaft":      {"x": int(forearm_pt["x"]),    "y": int(forearm_pt["y"]),    "x_pct": pct(forearm_pt["x"], w),    "y_pct": pct(forearm_pt["y"], h)},
             "forearm_ext":        {"x": int(forearm_ext["x"]),   "y": int(forearm_ext["y"]),   "x_pct": pct(forearm_ext["x"], w),   "y_pct": pct(forearm_ext["y"], h)},
-            "radial_head":        {"x": int(radial_pt["x"]),     "y": int(radial_pt["y"]),     "x_pct": pct(radial_pt["x"], w),     "y_pct": pct(radial_pt["y"], h)},
-            "olecranon":          {"x": int(olecranon_pt["x"]),  "y": int(olecranon_pt["y"]),  "x_pct": pct(olecranon_pt["x"], w),  "y_pct": pct(olecranon_pt["y"], h)},
+            **({"radial_head": {"x": int(radial_pt["x"]), "y": int(radial_pt["y"]), "x_pct": pct(radial_pt["x"], w), "y_pct": pct(radial_pt["y"], h)}} if radial_pt else {}),
+            **({"olecranon": {"x": int(olecranon_pt["x"]), "y": int(olecranon_pt["y"]), "x_pct": pct(olecranon_pt["x"], w), "y_pct": pct(olecranon_pt["y"], h)}} if olecranon_pt else {}),
             "qa": {
                 "view_type": view_type, "score": qa_score, "status": qa_status,
                 "message": qa_msg, "color": qa_color, "symmetry_ratio": 1.0,
