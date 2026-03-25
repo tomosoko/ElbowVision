@@ -29,11 +29,14 @@ def _make_dummy_dicom(path: str,
                       window_center: float = None,
                       window_width: float = None) -> str:
     """テスト用ダミーDICOMファイルを生成"""
-    ds = pydicom.Dataset()
-    ds.file_meta = pydicom.Dataset()
-    ds.file_meta.TransferSyntaxUID = pydicom.uid.ExplicitVRLittleEndian
-    ds.file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.1"
-    ds.file_meta.MediaStorageSOPInstanceUID = pydicom.uid.generate_uid()
+    file_meta = pydicom.dataset.FileMetaDataset()
+    file_meta.TransferSyntaxUID = pydicom.uid.ExplicitVRLittleEndian
+    file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.1"
+    file_meta.MediaStorageSOPInstanceUID = pydicom.uid.generate_uid()
+
+    ds = pydicom.dataset.FileDataset(
+        path, {}, file_meta=file_meta, preamble=b"\x00" * 128
+    )
     ds.is_little_endian = True
     ds.is_implicit_VR = False
 
