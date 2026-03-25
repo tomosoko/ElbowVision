@@ -1,0 +1,7 @@
+path: /Users/kohei/Dev/vision/ElbowVision/data/drr_test
+train: images/train
+val: images/val
+nc: 1
+names: [elbow_joint]
+kpt_shape: [6, 3]
+flip_idx: [0, 2, 1, 3, 4, 5]

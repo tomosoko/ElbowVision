@@ -1,0 +1,3 @@
+image_id,view_type,inference_engine,ai_carrying_angle,ai_flexion_deg,ai_rotation_error,ai_pronation_sup,ai_varus_valgus,ps_label,vv_label,qa_score,qa_status,rotation_level,flexion_level,overall_level,edge_angle,edge_confidence,edge_agreement_deg,manual_carrying_angle,manual_flexion_deg
+008_AP,AP,classical_cv,89.5,,18.9,3.1,0.0,回内 (Pronation),中立 (Neutral),75,FAIR,minor,,minor,0.0,low,89.5,,
+008_LAT,AP,classical_cv,1.7,,18.9,-6.7,0.0,回外 (Supination),中立 (Neutral),45,POOR,minor,,minor,0.0,high,1.7,,

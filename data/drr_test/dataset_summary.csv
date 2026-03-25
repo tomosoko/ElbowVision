@@ -1,0 +1,11 @@
+filename,split,view_type,rotation_error_deg,flexion_deg,base_flexion,carrying_angle
+elbow_00000.png,val,AP,-19.21,151.28,90.0,0.0
+elbow_00001.png,train,AP,-10.86,150.0,90.0,0.0
+elbow_00002.png,train,AP,-10.14,150.0,90.0,0.0
+elbow_00003.png,train,AP,23.68,150.0,90.0,0.0
+elbow_00004.png,train,AP,3.11,150.0,90.0,0.0
+elbow_00005.png,val,LAT,-25.04,73.17,90.0,0.0
+elbow_00006.png,train,LAT,27.11,81.49,90.0,0.0
+elbow_00007.png,train,LAT,-29.3,107.25,90.0,0.0
+elbow_00008.png,train,LAT,-11.82,83.43,90.0,0.0
+elbow_00009.png,train,LAT,-11.67,84.12,90.0,0.0

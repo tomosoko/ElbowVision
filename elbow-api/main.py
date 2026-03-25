@@ -1,8 +1,11 @@
 import os
 import math
+import time
+import zipfile
+import tempfile
 import uvicorn
-from typing import Optional
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from typing import Optional, List
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import pydicom
@@ -15,7 +18,17 @@ import base64
 # DICOMメタデータの欠損に対して寛容に処理
 pydicom.config.enforce_valid_values = False
 
-app = FastAPI(title="ElbowVision API", version="1.0.0")
+app = FastAPI(title="ElbowVision API", version="2.0.0")
+
+# ─── インメモリ推論統計 ──────────────────────────────────────────────────────
+_inference_stats = {
+    "total_inferences": 0,
+    "carrying_angles": [],
+    "flexion_angles": [],
+    "qa_scores": [],
+    "engine_counts": {"yolo_pose": 0, "classical_cv": 0},
+    "started_at": time.time(),
+}
 
 # ─── YOLOv8 Pose Model（プライマリ） ──────────────────────────────────────────
 
@@ -765,6 +778,9 @@ async def analyze_elbow(file: UploadFile = File(...)):
                 }
             except Exception as e:
                 print(f"ConvNeXt inference failed: {e}")
+
+        # 推論統計の記録
+        _record_stats(landmarks)
 
         return JSONResponse(content={
             "success": True,

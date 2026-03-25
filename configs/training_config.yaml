@@ -1,0 +1,44 @@
+# =============================================================
+# ElbowVision 訓練パラメータ設定
+# Mac Mini M4 Pro 64GB 最適化
+# =============================================================
+
+# --- 共通設定 ---
+device: mps              # Apple Silicon (mps / cuda / cpu)
+dataset_dir: data/drr_dataset_512
+results_dir: results
+
+# --- YOLOv8-Pose ---
+yolo:
+  model: yolov8n-pose.pt
+  epochs: 200
+  imgsz: 512
+  batch: 16
+  patience: 30
+  optimizer: AdamW
+  lr0: 0.001
+  lrf: 0.01
+  warmup_epochs: 3
+  pose_weight: 1.5       # キーポイント損失の重み
+  name: elbowvision_pose_v2
+
+# --- ConvNeXt ---
+convnext:
+  model: convnext_tiny    # tiny で十分（small より高速）
+  epochs: 100
+  batch_size: 32          # M4 Pro 64GBなら32で安定
+  lr: 0.0003
+  warmup_epochs: 5
+  patience: 20
+  amp: true               # Mixed precision (CUDAのみ有効、MPSでは自動無効)
+  weight_decay: 0.0001
+
+# --- Bland-Altman検証 ---
+bland_altman:
+  test_split: val         # 検証に使うsplit
+  output_dir: results/bland_altman
+  metrics:
+    - mae                 # Mean Absolute Error
+    - rmse                # Root Mean Square Error
+    - r2                  # R-squared
+    - bland_altman        # Bland-Altman plot

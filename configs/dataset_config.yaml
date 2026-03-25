@@ -1,0 +1,46 @@
+# =============================================================
+# ElbowVision DRR生成パラメータ設定
+# Mac Mini M4 Pro 64GB 最適化
+# =============================================================
+
+# --- CT入力 ---
+ct_dir: data/raw_dicom/ct/
+out_dir: data/drr_dataset_512
+
+# --- DRR生成パラメータ ---
+target_size: 512
+sid: 1000.0          # X線管焦点-検出器間距離 (mm)
+
+# 屈曲角度ステップ
+num_flexion_steps: 20       # 0-135度を20段階 (約6.75度刻み)
+num_rotation_per_flexion: 10  # 各屈曲角で10種の回転バリエーション
+
+# ビュー・左右
+views: [AP, LAT]
+laterality: [R, L]          # 左右反転で2倍
+
+# ノイズバリエーション
+noise_levels: [0.0, 0.01, 0.02]
+
+# 想定生成数: 20 * 10 * 2 * 2 * 3 = 2,400枚
+# 実際の生成枚数は n_ap + n_lat で制御（下記）
+
+# --- ビュー別生成枚数 ---
+# YAML設定使用時は num_flexion_steps * num_rotation_per_flexion * len(laterality) * len(noise_levels) で自動計算
+# 手動指定する場合:
+n_ap: 600               # AP像: 20steps * 10rot * 3noise = 600 (x2 laterality = 1200)
+n_lat: 600              # LAT像: 同上
+
+# --- HUウィンドウ ---
+hu_min: -200.0           # ファントム推奨値
+hu_max: 1000.0           # ファントム推奨値
+
+# --- ドメイン適応augmentation ---
+domain_aug: true
+
+# --- 複数シリーズ設定（オプション） ---
+# series_nums: "4,8,12"
+# base_flexions: "180,135,90"
+
+# --- データ分割 ---
+train_val_split: 0.85     # 85% train / 15% val
