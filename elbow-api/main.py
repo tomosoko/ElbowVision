@@ -177,7 +177,7 @@ app.add_middleware(
 async def health_check():
     return {
         "status": "ok",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "engines": {
             "yolo_pose":    yolo_model is not None,
             "convnext_xai": convnext_model is not None,
@@ -852,6 +852,324 @@ async def gradcam_endpoint(file: UploadFile = File(...), target: str = "all"):
         })
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Grad-CAM failed: {str(e)}")
+
+
+# ─── 統計記録ヘルパー ─────────────────────────────────────────────────────────
+def _record_stats(landmarks: dict):
+    _inference_stats["total_inferences"] += 1
+    angles = landmarks.get("angles", {})
+    qa = landmarks.get("qa", {})
+    engine = qa.get("inference_engine", "classical_cv")
+    if "YOLOv8" in str(engine):
+        _inference_stats["engine_counts"]["yolo_pose"] += 1
+    else:
+        _inference_stats["engine_counts"]["classical_cv"] += 1
+    if angles.get("carrying_angle") is not None:
+        _inference_stats["carrying_angles"].append(angles["carrying_angle"])
+    if angles.get("flexion") is not None:
+        _inference_stats["flexion_angles"].append(angles["flexion"])
+    if qa.get("score") is not None:
+        _inference_stats["qa_scores"].append(qa["score"])
+
+
+# ─── 単一画像の解析処理（内部共通） ──────────────────────────────────────────
+def _analyze_single_image(image_array: np.ndarray) -> dict:
+    """analyze_elbowとbatch_analyzeで共有する解析ロジック"""
+    landmarks = detect_with_yolo_pose(image_array)
+    if landmarks is None:
+        landmarks = detect_bone_landmarks_classical(image_array)
+
+    angles = landmarks["angles"]
+    primary_angle = angles["carrying_angle"] if angles["carrying_angle"] is not None else angles["flexion"]
+    edge_validation = None
+    if primary_angle is not None:
+        edge_validation = validate_angle_with_edges(image_array, primary_angle)
+
+    positioning_correction = estimate_positioning_correction(image_array, landmarks)
+
+    second_opinion = None
+    if TORCH_INSTALLED and convnext_model is not None:
+        try:
+            image_rgb = cv2.cvtColor(image_array, cv2.COLOR_BGR2RGB)
+            pil_img = Image.fromarray(image_rgb)
+            img_tensor = convnext_transforms(pil_img).to(device)
+            with torch.no_grad():
+                pred = convnext_model(img_tensor.unsqueeze(0))[0].cpu().numpy()
+            view = landmarks["qa"]["view_type"]
+            second_opinion = {
+                "rotation_error_deg": round(float(pred[0]), 1) if view == "AP" else None,
+                "flexion_deg": round(float(pred[1]), 1) if view == "LAT" else None,
+                "model": "ConvNeXt-Small",
+            }
+        except Exception as e:
+            print(f"ConvNeXt inference failed: {e}")
+
+    _record_stats(landmarks)
+
+    return {
+        "success": True,
+        "landmarks": landmarks,
+        "edge_validation": edge_validation,
+        "positioning_correction": positioning_correction,
+        "second_opinion": second_opinion,
+        "image_size": {"width": image_array.shape[1], "height": image_array.shape[0]},
+    }
+
+
+# ─── POST /api/batch-analyze ─────────────────────────────────────────────────
+@app.post("/api/batch-analyze")
+async def batch_analyze(file: UploadFile = File(...)):
+    """
+    複数画像の一括推論。ZIPファイルまたは単一画像をアップロード。
+    ZIPの場合は中のPNG/JPG/DICOM画像を全て解析し、結果をJSON配列で返す。
+    """
+    try:
+        content = await file.read()
+        fname = (file.filename or "").lower()
+
+        results: List[dict] = []
+        allowed_img_ext = ('.png', '.jpg', '.jpeg', '.dcm', '.dicom')
+
+        if fname.endswith('.zip'):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                zip_path = os.path.join(tmpdir, "upload.zip")
+                with open(zip_path, "wb") as f:
+                    f.write(content)
+                try:
+                    with zipfile.ZipFile(zip_path, 'r') as zf:
+                        names = sorted([
+                            n for n in zf.namelist()
+                            if n.lower().endswith(allowed_img_ext)
+                            and not n.startswith('__MACOSX')
+                        ])
+                        if not names:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="ZIP内に対応画像ファイル(PNG/JPG/DICOM)が見つかりません。"
+                            )
+                        for img_name in names:
+                            try:
+                                img_bytes = zf.read(img_name)
+                                image_array = _decode_image(img_bytes, img_name)
+                                result = _analyze_single_image(image_array)
+                                result["filename"] = os.path.basename(img_name)
+                                results.append(result)
+                            except Exception as e:
+                                results.append({
+                                    "filename": os.path.basename(img_name),
+                                    "success": False,
+                                    "error": str(e),
+                                })
+                except zipfile.BadZipFile:
+                    raise HTTPException(status_code=400, detail="不正なZIPファイルです。")
+        else:
+            # 単一画像
+            image_array = _decode_image(content, fname)
+            result = _analyze_single_image(image_array)
+            result["filename"] = file.filename or "unknown"
+            results.append(result)
+
+        # サマリー
+        successful = [r for r in results if r.get("success")]
+        carrying_angles = [
+            r["landmarks"]["angles"]["carrying_angle"]
+            for r in successful
+            if r.get("landmarks", {}).get("angles", {}).get("carrying_angle") is not None
+        ]
+        flexion_angles = [
+            r["landmarks"]["angles"]["flexion"]
+            for r in successful
+            if r.get("landmarks", {}).get("angles", {}).get("flexion") is not None
+        ]
+        qa_scores = [
+            r["landmarks"]["qa"]["score"]
+            for r in successful
+            if r.get("landmarks", {}).get("qa", {}).get("score") is not None
+        ]
+
+        summary = {
+            "total_images": len(results),
+            "successful": len(successful),
+            "failed": len(results) - len(successful),
+            "avg_carrying_angle": round(float(np.mean(carrying_angles)), 1) if carrying_angles else None,
+            "avg_flexion_angle": round(float(np.mean(flexion_angles)), 1) if flexion_angles else None,
+            "avg_qa_score": round(float(np.mean(qa_scores)), 1) if qa_scores else None,
+        }
+
+        return JSONResponse(content={"results": results, "summary": summary})
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── GET /api/model-info ─────────────────────────────────────────────────────
+@app.get("/api/model-info")
+async def model_info():
+    """使用中のモデル情報を返す"""
+    info = {
+        "primary_engine": "YOLOv8-Pose" if yolo_model is not None else "Classical CV (fallback)",
+        "yolo": {
+            "loaded": yolo_model is not None,
+            "model_path": YOLO_MODEL_PATH if yolo_model is not None else None,
+            "version": "YOLOv8 (ultralytics)",
+            "task": "pose",
+            "keypoints": 6,
+            "keypoint_names": [
+                "humerus_shaft", "lateral_epicondyle", "medial_epicondyle",
+                "forearm_shaft", "radial_head", "olecranon"
+            ],
+        },
+        "convnext": {
+            "loaded": convnext_model is not None,
+            "model_path": CONVNEXT_MODEL_PATH if convnext_model is not None else None,
+            "version": "ConvNeXt-Small",
+            "outputs": ["rotation_error_deg", "flexion_deg"],
+            "device": str(device) if device is not None else None,
+        },
+        "gradcam": {
+            "available": gradcam_engine is not None,
+        },
+        "classical_cv": {
+            "available": True,
+            "note": "YOLOv8未ロード時のフォールバック。CLAHE + Otsu + ConnectedComponents。",
+        },
+        "fallback_active": yolo_model is None,
+    }
+    return JSONResponse(content=info)
+
+
+# ─── POST /api/compare ───────────────────────────────────────────────────────
+@app.post("/api/compare")
+async def compare_images(
+    file1: UploadFile = File(...),
+    file2: UploadFile = File(...),
+):
+    """
+    2枚の画像を比較。角度差分・QA改善度を計算。
+    ポジショニング改善前後の比較に使用。
+    """
+    try:
+        content1 = await file1.read()
+        content2 = await file2.read()
+
+        img1 = _decode_image(content1, file1.filename or "image1.png")
+        img2 = _decode_image(content2, file2.filename or "image2.png")
+
+        result1 = _analyze_single_image(img1)
+        result2 = _analyze_single_image(img2)
+
+        angles1 = result1["landmarks"]["angles"]
+        angles2 = result2["landmarks"]["angles"]
+        qa1 = result1["landmarks"]["qa"]["score"]
+        qa2 = result2["landmarks"]["qa"]["score"]
+
+        # 角度差分
+        carrying_diff = None
+        if angles1.get("carrying_angle") is not None and angles2.get("carrying_angle") is not None:
+            carrying_diff = round(angles2["carrying_angle"] - angles1["carrying_angle"], 1)
+
+        flexion_diff = None
+        if angles1.get("flexion") is not None and angles2.get("flexion") is not None:
+            flexion_diff = round(angles2["flexion"] - angles1["flexion"], 1)
+
+        qa_diff = round(qa2 - qa1, 1)
+
+        # ポジショニング改善判定
+        pc1 = result1.get("positioning_correction", {})
+        pc2 = result2.get("positioning_correction", {})
+        rot_err1 = pc1.get("rotation_error", 0)
+        rot_err2 = pc2.get("rotation_error", 0)
+        rotation_improvement = round(rot_err1 - rot_err2, 1)
+
+        if qa_diff > 10:
+            improvement_label = "大幅改善"
+        elif qa_diff > 0:
+            improvement_label = "改善"
+        elif qa_diff == 0:
+            improvement_label = "変化なし"
+        elif qa_diff > -10:
+            improvement_label = "やや悪化"
+        else:
+            improvement_label = "悪化"
+
+        return JSONResponse(content={
+            "image1": {
+                "filename": file1.filename,
+                "carrying_angle": angles1.get("carrying_angle"),
+                "flexion": angles1.get("flexion"),
+                "qa_score": qa1,
+                "positioning_level": pc1.get("overall_level"),
+                "rotation_error": rot_err1,
+            },
+            "image2": {
+                "filename": file2.filename,
+                "carrying_angle": angles2.get("carrying_angle"),
+                "flexion": angles2.get("flexion"),
+                "qa_score": qa2,
+                "positioning_level": pc2.get("overall_level"),
+                "rotation_error": rot_err2,
+            },
+            "comparison": {
+                "carrying_angle_diff": carrying_diff,
+                "flexion_diff": flexion_diff,
+                "qa_score_diff": qa_diff,
+                "rotation_improvement_deg": rotation_improvement,
+                "improvement_label": improvement_label,
+            },
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── GET /api/stats ──────────────────────────────────────────────────────────
+@app.get("/api/stats")
+async def inference_stats():
+    """これまでの推論統計を返す"""
+    ca = _inference_stats["carrying_angles"]
+    fa = _inference_stats["flexion_angles"]
+    qa = _inference_stats["qa_scores"]
+    uptime = time.time() - _inference_stats["started_at"]
+
+    # QAスコア分布
+    qa_distribution = {"excellent": 0, "good": 0, "fair": 0, "poor": 0}
+    for s in qa:
+        if s >= 90:
+            qa_distribution["excellent"] += 1
+        elif s >= 75:
+            qa_distribution["good"] += 1
+        elif s >= 50:
+            qa_distribution["fair"] += 1
+        else:
+            qa_distribution["poor"] += 1
+
+    return JSONResponse(content={
+        "total_inferences": _inference_stats["total_inferences"],
+        "uptime_seconds": round(uptime, 1),
+        "engine_counts": _inference_stats["engine_counts"],
+        "carrying_angle": {
+            "count": len(ca),
+            "mean": round(float(np.mean(ca)), 1) if ca else None,
+            "std": round(float(np.std(ca)), 1) if ca else None,
+            "min": round(float(min(ca)), 1) if ca else None,
+            "max": round(float(max(ca)), 1) if ca else None,
+        },
+        "flexion_angle": {
+            "count": len(fa),
+            "mean": round(float(np.mean(fa)), 1) if fa else None,
+            "std": round(float(np.std(fa)), 1) if fa else None,
+            "min": round(float(min(fa)), 1) if fa else None,
+            "max": round(float(max(fa)), 1) if fa else None,
+        },
+        "qa_score": {
+            "count": len(qa),
+            "mean": round(float(np.mean(qa)), 1) if qa else None,
+            "distribution": qa_distribution,
+        },
+    })
 
 
 if __name__ == "__main__":

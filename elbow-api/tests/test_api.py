@@ -305,3 +305,227 @@ class TestUtilityFunctions:
         assert full_angle(10.0, 20.0) == 10.0
         assert full_angle(350.0, 10.0) == 20.0  # 360度をまたぐ
         assert full_angle(0.0, 180.0) == 180.0
+
+
+# ─── /api/model-info ─────────────────────────────────────────────────────────
+class TestModelInfoEndpoint:
+    def test_model_info_returns_200(self, client):
+        r = client.get("/api/model-info")
+        assert r.status_code == 200
+
+    def test_model_info_has_primary_engine(self, client):
+        data = client.get("/api/model-info").json()
+        assert "primary_engine" in data
+        assert data["primary_engine"] in ["YOLOv8-Pose", "Classical CV (fallback)"]
+
+    def test_model_info_has_yolo_section(self, client):
+        data = client.get("/api/model-info").json()
+        assert "yolo" in data
+        assert "loaded" in data["yolo"]
+        assert data["yolo"]["keypoints"] == 6
+
+    def test_model_info_has_convnext_section(self, client):
+        data = client.get("/api/model-info").json()
+        assert "convnext" in data
+        assert "loaded" in data["convnext"]
+
+    def test_model_info_has_classical_cv(self, client):
+        data = client.get("/api/model-info").json()
+        assert data["classical_cv"]["available"] is True
+
+    def test_model_info_fallback_consistent(self, client):
+        """fallback_activeがYOLO未ロード状態と整合する"""
+        data = client.get("/api/model-info").json()
+        assert data["fallback_active"] == (not data["yolo"]["loaded"])
+
+
+# ─── /api/stats ──────────────────────────────────────────────────────────────
+class TestStatsEndpoint:
+    def test_stats_returns_200(self, client):
+        r = client.get("/api/stats")
+        assert r.status_code == 200
+
+    def test_stats_has_total_inferences(self, client):
+        data = client.get("/api/stats").json()
+        assert "total_inferences" in data
+        assert isinstance(data["total_inferences"], int)
+
+    def test_stats_has_uptime(self, client):
+        data = client.get("/api/stats").json()
+        assert "uptime_seconds" in data
+        assert data["uptime_seconds"] >= 0
+
+    def test_stats_has_engine_counts(self, client):
+        data = client.get("/api/stats").json()
+        assert "engine_counts" in data
+        assert "yolo_pose" in data["engine_counts"]
+        assert "classical_cv" in data["engine_counts"]
+
+    def test_stats_has_qa_distribution(self, client):
+        data = client.get("/api/stats").json()
+        dist = data["qa_score"]["distribution"]
+        assert all(k in dist for k in ["excellent", "good", "fair", "poor"])
+
+    def test_stats_increments_after_analyze(self, client):
+        """analyzeを呼ぶと統計が増える"""
+        before = client.get("/api/stats").json()["total_inferences"]
+        client.post("/api/analyze", files={"file": ("test.png", make_test_image(), "image/png")})
+        after = client.get("/api/stats").json()["total_inferences"]
+        assert after > before
+
+
+# ─── /api/batch-analyze ──────────────────────────────────────────────────────
+class TestBatchAnalyzeEndpoint:
+    def test_batch_single_image(self, client):
+        """単一画像でもbatch-analyzeが動作する"""
+        r = client.post(
+            "/api/batch-analyze",
+            files={"file": ("test.png", make_test_image(), "image/png")},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert "results" in data
+        assert "summary" in data
+        assert len(data["results"]) == 1
+        assert data["results"][0]["success"] is True
+
+    def test_batch_zip_upload(self, client):
+        """ZIPファイルで複数画像を一括推論"""
+        import zipfile as zf
+        import io as _io
+        buf = _io.BytesIO()
+        with zf.ZipFile(buf, 'w') as z:
+            z.writestr("img1.png", make_test_image())
+            z.writestr("img2.png", make_test_image(size=128))
+        buf.seek(0)
+
+        r = client.post(
+            "/api/batch-analyze",
+            files={"file": ("batch.zip", buf.read(), "application/zip")},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["summary"]["total_images"] == 2
+        assert data["summary"]["successful"] == 2
+
+    def test_batch_zip_with_invalid_image(self, client):
+        """ZIP内に壊れた画像があってもスキップして他は処理する"""
+        import zipfile as zf
+        import io as _io
+        buf = _io.BytesIO()
+        with zf.ZipFile(buf, 'w') as z:
+            z.writestr("good.png", make_test_image())
+            z.writestr("bad.png", b"not an image")
+        buf.seek(0)
+
+        r = client.post(
+            "/api/batch-analyze",
+            files={"file": ("batch.zip", buf.read(), "application/zip")},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["summary"]["total_images"] == 2
+        assert data["summary"]["failed"] >= 1
+
+    def test_batch_empty_zip(self, client):
+        """画像のないZIPはエラーを返す"""
+        import zipfile as zf
+        import io as _io
+        buf = _io.BytesIO()
+        with zf.ZipFile(buf, 'w') as z:
+            z.writestr("readme.txt", "no images here")
+        buf.seek(0)
+
+        r = client.post(
+            "/api/batch-analyze",
+            files={"file": ("empty.zip", buf.read(), "application/zip")},
+        )
+        assert r.status_code == 400
+
+    def test_batch_invalid_zip(self, client):
+        """不正なZIPファイルはエラーを返す"""
+        r = client.post(
+            "/api/batch-analyze",
+            files={"file": ("bad.zip", b"not a zip file", "application/zip")},
+        )
+        assert r.status_code == 400
+
+    def test_batch_summary_has_averages(self, client):
+        """サマリーに平均値が含まれる"""
+        r = client.post(
+            "/api/batch-analyze",
+            files={"file": ("test.png", make_test_image(), "image/png")},
+        )
+        summary = r.json()["summary"]
+        assert "avg_carrying_angle" in summary or "avg_flexion_angle" in summary
+        assert "avg_qa_score" in summary
+
+
+# ─── /api/compare ────────────────────────────────────────────────────────────
+class TestCompareEndpoint:
+    def test_compare_returns_200(self, client):
+        r = client.post(
+            "/api/compare",
+            files=[
+                ("file1", ("img1.png", make_test_image(), "image/png")),
+                ("file2", ("img2.png", make_test_image(size=128), "image/png")),
+            ],
+        )
+        assert r.status_code == 200
+
+    def test_compare_has_both_images(self, client):
+        r = client.post(
+            "/api/compare",
+            files=[
+                ("file1", ("img1.png", make_test_image(), "image/png")),
+                ("file2", ("img2.png", make_test_image(), "image/png")),
+            ],
+        )
+        data = r.json()
+        assert "image1" in data
+        assert "image2" in data
+        assert "comparison" in data
+
+    def test_compare_has_qa_scores(self, client):
+        r = client.post(
+            "/api/compare",
+            files=[
+                ("file1", ("img1.png", make_test_image(), "image/png")),
+                ("file2", ("img2.png", make_test_image(), "image/png")),
+            ],
+        )
+        data = r.json()
+        assert isinstance(data["image1"]["qa_score"], (int, float))
+        assert isinstance(data["image2"]["qa_score"], (int, float))
+
+    def test_compare_has_improvement_label(self, client):
+        r = client.post(
+            "/api/compare",
+            files=[
+                ("file1", ("img1.png", make_test_image(), "image/png")),
+                ("file2", ("img2.png", make_test_image(), "image/png")),
+            ],
+        )
+        comp = r.json()["comparison"]
+        assert comp["improvement_label"] in ["大幅改善", "改善", "変化なし", "やや悪化", "悪化"]
+
+    def test_compare_qa_diff_numeric(self, client):
+        r = client.post(
+            "/api/compare",
+            files=[
+                ("file1", ("img1.png", make_test_image(), "image/png")),
+                ("file2", ("img2.png", make_test_image(), "image/png")),
+            ],
+        )
+        comp = r.json()["comparison"]
+        assert isinstance(comp["qa_score_diff"], (int, float))
+
+    def test_compare_missing_file_returns_422(self, client):
+        """ファイルが1つだけの場合は422"""
+        r = client.post(
+            "/api/compare",
+            files=[
+                ("file1", ("img1.png", make_test_image(), "image/png")),
+            ],
+        )
+        assert r.status_code == 422
