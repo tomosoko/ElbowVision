@@ -73,6 +73,11 @@ import numpy as np
 import pydicom
 from scipy.ndimage import zoom, affine_transform
 
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
 
 # ─── CT ボリューム読み込み ──────────────────────────────────────────────────────
 
@@ -943,6 +948,9 @@ def generate_dataset(args):
         os.makedirs(os.path.join(out_dir, "images", split), exist_ok=True)
         os.makedirs(os.path.join(out_dir, "labels", split), exist_ok=True)
 
+    # train/val分割比率（YAML設定対応）
+    val_ratio = 1.0 - getattr(args, 'train_val_split', 0.85)
+
     summary_rows = []
     img_idx = 0
 
@@ -996,7 +1004,7 @@ def generate_dataset(args):
 
         label = make_yolo_label(rot_lm, "AP", drr.shape[0], drr.shape[1],
                                 vol_shape=rot_vol.shape, sid_mm=sid_mm, voxel_mm=vd['voxel_mm'])
-        split = "val" if i < args.n_ap // 5 else "train"
+        split = "val" if i < int(args.n_ap * val_ratio) else "train"
         save_sample(drr_bgr, label, {
             "view_type":          "AP",
             "rotation_error_deg": round(rotation_err, 2),
@@ -1024,7 +1032,7 @@ def generate_dataset(args):
 
         label = make_yolo_label(rot_lm, "LAT", drr.shape[0], drr.shape[1],
                                 vol_shape=rot_vol.shape, sid_mm=sid_mm, voxel_mm=vd['voxel_mm'])
-        split = "val" if i < args.n_lat // 5 else "train"
+        split = "val" if i < int(args.n_lat * val_ratio) else "train"
         save_sample(drr_bgr, label, {
             "view_type":          "LAT",
             "rotation_error_deg": round(rotation_err, 2),
@@ -1071,30 +1079,95 @@ def generate_dataset(args):
 
 # ─── エントリポイント ──────────────────────────────────────────────────────────
 
+def _load_config_yaml(config_path: str) -> dict:
+    """YAML設定ファイルを読み込む。PyYAMLが必要。"""
+    if yaml is None:
+        raise ImportError(
+            "PyYAML が必要です: pip install pyyaml\n"
+            "  --config を使わない場合は従来のCLI引数を使用してください。"
+        )
+    with open(config_path) as f:
+        return yaml.safe_load(f)
+
+
+def _apply_config_to_namespace(ns: argparse.Namespace, config: dict):
+    """YAML設定の値をNamespaceに反映する（CLI引数が未指定の場合のみ上書き）。"""
+    # YAML key -> argparse dest のマッピング
+    key_map = {
+        'ct_dir':         'ct_dir',
+        'out_dir':        'out_dir',
+        'n_ap':           'n_ap',
+        'n_lat':          'n_lat',
+        'laterality':     'laterality',
+        'sid':            'sid',
+        'series_nums':    'series_nums',
+        'base_flexions':  'base_flexions',
+        'target_size':    'target_size',
+        'domain_aug':     'domain_aug',
+        'hu_min':         'hu_min',
+        'hu_max':         'hu_max',
+        'train_val_split': 'train_val_split',
+    }
+    for yaml_key, attr_name in key_map.items():
+        if yaml_key in config and not hasattr(ns, f'_cli_{attr_name}'):
+            val = config[yaml_key]
+            # laterality: YAMLではリスト [R, L] だが、CLI互換のため最初の値を使用
+            if yaml_key == 'laterality' and isinstance(val, list):
+                val = val[0] if val else None
+            setattr(ns, attr_name, val)
+
+
 def main():
     parser = argparse.ArgumentParser(description="ElbowSynth: 肘CT → DRR自動生成（6方向CT対応）")
-    parser.add_argument("--ct_dir",       required=True,
+    parser.add_argument("--config",       default=None,
+                        help="YAML設定ファイルパス（configs/dataset_config.yaml）。CLI引数で上書き可能")
+    parser.add_argument("--ct_dir",       default=None,
                         help="CT DICOMフォルダ（サブディレクトリも再帰検索）")
-    parser.add_argument("--out_dir",      required=True, help="出力先フォルダ")
-    parser.add_argument("--n_ap",         type=int, default=120, help="AP DRR生成枚数")
-    parser.add_argument("--n_lat",        type=int, default=360, help="LAT DRR生成枚数")
+    parser.add_argument("--out_dir",      default=None, help="出力先フォルダ")
+    parser.add_argument("--n_ap",         type=int, default=None, help="AP DRR生成枚数")
+    parser.add_argument("--n_lat",        type=int, default=None, help="LAT DRR生成枚数")
     parser.add_argument("--laterality",   choices=['R', 'L'], default=None,
                         help="左右腕の指定（R=右腕 / L=左腕）。省略時はDICOMタグから自動検出")
-    parser.add_argument("--sid",          type=float, default=1000.0,
+    parser.add_argument("--sid",          type=float, default=None,
                         help="X線管焦点〜検出器間距離 mm（デフォルト 1000.0 = 100cm）")
     parser.add_argument("--series_nums",  default=None,
                         help="使用する SeriesNumber（カンマ区切りで複数指定可）例: '4,8,12'")
     parser.add_argument("--base_flexions", default=None,
                         help="各シリーズのCT撮影時の肘屈曲角°（series_nums と同数）例: '180,135,90'")
-    parser.add_argument("--target_size",  type=int,   default=128,
+    parser.add_argument("--target_size",  type=int,   default=None,
                         help="CT ボリュームの最大辺サイズ（px）。高いほど高解像度DRR生成（デフォルト: 128）")
-    parser.add_argument("--domain_aug",   action="store_true",
+    parser.add_argument("--domain_aug",   action="store_true", default=None,
                         help="実X線らしさを追加するドメイン適応augmentationを適用")
-    parser.add_argument("--hu_min",       type=float, default=-400.0,
+    parser.add_argument("--hu_min",       type=float, default=None,
                         help="HUウィンドウ下限（ファントム推奨: -200、デフォルト: -400）")
-    parser.add_argument("--hu_max",       type=float, default=1500.0,
+    parser.add_argument("--hu_max",       type=float, default=None,
                         help="HUウィンドウ上限（ファントム推奨: 1000、デフォルト: 1500）")
     args = parser.parse_args()
+
+    # YAML設定の読み込み・マージ
+    if args.config:
+        config = _load_config_yaml(args.config)
+        print(f"設定ファイル読み込み: {args.config}")
+        _apply_config_to_namespace(args, config)
+
+    # デフォルト値の適用（CLI/YAMLどちらも未指定の場合）
+    defaults = {
+        'n_ap': 120, 'n_lat': 360, 'sid': 1000.0,
+        'target_size': 128, 'domain_aug': False,
+        'hu_min': -400.0, 'hu_max': 1500.0,
+    }
+    for key, default_val in defaults.items():
+        if getattr(args, key, None) is None:
+            setattr(args, key, default_val)
+
+    # 必須引数チェック
+    if not args.ct_dir or not args.out_dir:
+        parser.error("--ct_dir と --out_dir は必須です（CLI引数またはYAML設定で指定）")
+
+    # train_val_split をargsに保持（generate_dataset で使用可能）
+    if not hasattr(args, 'train_val_split'):
+        args.train_val_split = 0.85
+
     generate_dataset(args)
 
 
