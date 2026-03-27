@@ -48,6 +48,10 @@ class BlandAltmanResult:
     std_diff: float
     loa_upper: float
     loa_lower: float
+    # 95% confidence intervals (Bland & Altman, 1986, 1999)
+    ci_mean: tuple[float, float]       # (lower, upper) for mean bias
+    ci_loa_upper: tuple[float, float]  # (lower, upper) for upper LoA
+    ci_loa_lower: tuple[float, float]  # (lower, upper) for lower LoA
     mae: float
     rmse: float
     r_squared: float
@@ -69,6 +73,15 @@ def compute_bland_altman(gt: np.ndarray, pred: np.ndarray) -> BlandAltmanResult:
     loa_upper = mean_diff + 1.96 * std_diff
     loa_lower = mean_diff - 1.96 * std_diff
 
+    # 95% CIs for bias and LoA (Bland & Altman, 1986, 1999)
+    n = len(gt)
+    t_crit = stats.t.ppf(0.975, df=n - 1)
+    se_mean = std_diff / np.sqrt(n)
+    se_loa = np.sqrt(3.0 * std_diff ** 2 / n)
+    ci_mean = (mean_diff - t_crit * se_mean, mean_diff + t_crit * se_mean)
+    ci_loa_upper = (loa_upper - t_crit * se_loa, loa_upper + t_crit * se_loa)
+    ci_loa_lower = (loa_lower - t_crit * se_loa, loa_lower + t_crit * se_loa)
+
     mae = float(np.mean(np.abs(diff)))
     rmse = float(np.sqrt(np.mean(diff ** 2)))
 
@@ -80,11 +93,14 @@ def compute_bland_altman(gt: np.ndarray, pred: np.ndarray) -> BlandAltmanResult:
     icc_val = compute_icc(gt, pred)
 
     return BlandAltmanResult(
-        n=len(gt),
+        n=n,
         mean_diff=mean_diff,
         std_diff=std_diff,
         loa_upper=loa_upper,
         loa_lower=loa_lower,
+        ci_mean=ci_mean,
+        ci_loa_upper=ci_loa_upper,
+        ci_loa_lower=ci_loa_lower,
         mae=mae,
         rmse=rmse,
         r_squared=r_squared,
@@ -159,6 +175,14 @@ def plot_bland_altman(
     ax.axhline(result.loa_lower, color="#ef4444", linewidth=1.5, linestyle="--",
                label=f"-1.96SD: {result.loa_lower:+.2f}{unit}")
 
+    # 95% CI shaded regions
+    ax.axhspan(result.ci_mean[0], result.ci_mean[1],
+               color="#22c55e", alpha=0.12, zorder=1)
+    ax.axhspan(result.ci_loa_upper[0], result.ci_loa_upper[1],
+               color="#ef4444", alpha=0.10, zorder=1)
+    ax.axhspan(result.ci_loa_lower[0], result.ci_loa_lower[1],
+               color="#ef4444", alpha=0.10, zorder=1)
+
     # Zero line
     ax.axhline(0, color="gray", linewidth=0.8, alpha=0.5)
 
@@ -201,8 +225,11 @@ def format_summary(
         lines.append("")
         lines.append(f"--- {name} (n={r.n}) ---")
         lines.append(f"  Mean Bias      : {r.mean_diff:+.3f} deg")
+        lines.append(f"    95% CI       : [{r.ci_mean[0]:+.3f}, {r.ci_mean[1]:+.3f}] deg")
         lines.append(f"  SD of Diff     : {r.std_diff:.3f} deg")
         lines.append(f"  95% LoA        : [{r.loa_lower:+.3f}, {r.loa_upper:+.3f}] deg")
+        lines.append(f"    Upper LoA CI : [{r.ci_loa_upper[0]:+.3f}, {r.ci_loa_upper[1]:+.3f}] deg")
+        lines.append(f"    Lower LoA CI : [{r.ci_loa_lower[0]:+.3f}, {r.ci_loa_lower[1]:+.3f}] deg")
         lines.append(f"  MAE            : {r.mae:.3f} deg")
         lines.append(f"  RMSE           : {r.rmse:.3f} deg")
         lines.append(f"  Pearson r      : {r.pearson_r:.4f} (p={r.p_value:.2e})")

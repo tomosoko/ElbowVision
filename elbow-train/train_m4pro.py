@@ -21,7 +21,7 @@ model = YOLO("yolov8s-pose.pt")
 
 start = time.time()
 results = model.train(
-    data="data/yolo_dataset_v2/dataset.yaml",
+    data="data/yolo_dataset_v3/dataset.yaml",
     epochs=150,
     imgsz=256,
     batch=64,           # 64GBメモリ活用（nano=16→small=64）

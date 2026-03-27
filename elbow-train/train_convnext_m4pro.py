@@ -20,8 +20,8 @@ import time
 # このスクリプトは ElbowVision/ から実行される想定
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-CSV_PATH = os.path.join(BASE_DIR, "data", "yolo_dataset_v2", "convnext_labels.csv")
-IMGS_DIR = os.path.join(BASE_DIR, "data", "yolo_dataset_v2", "images")
+CSV_PATH = os.path.join(BASE_DIR, "data", "yolo_dataset_v3", "convnext_labels.csv")
+IMGS_DIR = os.path.join(BASE_DIR, "data", "yolo_dataset_v3", "images")
 SAVE_PATH = os.path.join(BASE_DIR, "elbow-api", "elbow_convnext_best.pth")
 
 # train_angle_predictor.py を import するためにパスを追加
@@ -30,7 +30,7 @@ sys.path.insert(0, TRAINING_DIR)
 
 # --- 訓練パラメータ（M4 Pro 64GB最適化）-------------------------------------
 EPOCHS = 100
-BATCH_SIZE = 32       # 64GB RAM -> batch=32 で余裕あり
+BATCH_SIZE = 64       # 64GB RAM -> batch=64 でM4 Pro最適化
 LR = 1e-4
 PATIENCE = 20
 WARMUP = 5

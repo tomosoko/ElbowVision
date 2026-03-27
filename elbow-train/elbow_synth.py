@@ -691,6 +691,51 @@ def _project_kp_perspective(n_PD: float, n_depth: float, n_lateral: float,
     return px, py
 
 
+def compute_carrying_angle(landmarks_norm: dict) -> float:
+    """AP像用: carrying angle を算出（度）。正=外反(valgus), 負=内反(varus)。
+
+    上腕軸 (humerus_shaft → joint_center) と前腕軸 (joint_center → forearm_shaft) の
+    冠状面 (PD-ML) での角度差を返す。正常値: 5〜15° (valgus)。
+    """
+    hs = landmarks_norm["humerus_shaft"]   # (PD, AP, ML)
+    jc = landmarks_norm["joint_center"]
+    fs = landmarks_norm["forearm_shaft"]
+    # 冠状面: PD=縦軸, ML=横軸
+    hum_vec = (jc[0] - hs[0], jc[2] - hs[2])   # (dPD, dML)
+    fore_vec = (fs[0] - jc[0], fs[2] - jc[2])
+    # 各ベクトルのPD軸からの角度 (atan2で右手系)
+    ang_hum  = math.atan2(hum_vec[1],  hum_vec[0])
+    ang_fore = math.atan2(fore_vec[1], fore_vec[0])
+    carrying = math.degrees(ang_fore - ang_hum)
+    # -180..180 に正規化
+    if carrying > 180:
+        carrying -= 360
+    elif carrying < -180:
+        carrying += 360
+    return carrying
+
+
+def compute_flexion_angle(landmarks_norm: dict) -> float:
+    """LAT像用: 屈曲角を算出（度）。
+
+    上腕軸 (humerus_shaft → joint_center) と前腕軸 (joint_center → forearm_shaft) の
+    矢状面 (PD-AP) での角度から算出。完全伸展=180°, 完全屈曲≈30°。
+    """
+    hs = landmarks_norm["humerus_shaft"]
+    jc = landmarks_norm["joint_center"]
+    fs = landmarks_norm["forearm_shaft"]
+    # 矢状面: PD=縦軸, AP=横軸
+    hum_vec  = (jc[0] - hs[0], jc[1] - hs[1])
+    fore_vec = (fs[0] - jc[0], fs[1] - jc[1])
+    dot = hum_vec[0] * fore_vec[0] + hum_vec[1] * fore_vec[1]
+    mag_h = math.sqrt(hum_vec[0]**2 + hum_vec[1]**2)
+    mag_f = math.sqrt(fore_vec[0]**2 + fore_vec[1]**2)
+    if mag_h < 1e-9 or mag_f < 1e-9:
+        return 180.0
+    cos_val = max(-1.0, min(1.0, dot / (mag_h * mag_f)))
+    return math.degrees(math.acos(cos_val))
+
+
 def make_yolo_label(landmarks_norm: dict, axis: str, img_h: int, img_w: int,
                     vol_shape: tuple = (128, 128, 128),
                     sid_mm: float = 1000.0, voxel_mm: float = 1.0) -> str:
@@ -996,6 +1041,48 @@ def generate_dataset(args):
         # 5. ヒストグラムマッチング（実X線の輝度分布に寄せる、50%の確率で適用）
         if random.random() < 0.5:
             img = _histogram_match_to_real(img.astype(np.uint8)).astype(np.float32)
+        # ── SyntheX-inspired stronger domain randomization ──
+        # 6. Random inversion（SyntheXで重要とされたDRR→実X線汎化手法）
+        if random.random() < 0.2:
+            img = 255.0 - img
+        # 7. Salt-and-pepper noise（インパルスノイズ）
+        if random.random() < 0.3:
+            sp_ratio = random.uniform(0.01, 0.03)
+            mask = np.random.random(img.shape[:2])
+            salt = mask < (sp_ratio / 2.0)
+            pepper = mask > (1.0 - sp_ratio / 2.0)
+            img[salt] = 255.0
+            img[pepper] = 0.0
+        # 8. Random affine transform（微小回転・スケール・平行移動）
+        if random.random() < 0.4:
+            h, w = img.shape[:2]
+            angle = random.uniform(-5.0, 5.0)
+            scale = random.uniform(0.95, 1.05)
+            tx, ty = random.uniform(-5, 5), random.uniform(-5, 5)
+            center = (w / 2.0, h / 2.0)
+            M = cv2.getRotationMatrix2D(center, angle, scale)
+            M[0, 2] += tx
+            M[1, 2] += ty
+            img = cv2.warpAffine(img.astype(np.uint8), M, (w, h),
+                                 borderMode=cv2.BORDER_REPLICATE).astype(np.float32)
+        # 9. Contrast dropout（ランダムパッチの輝度変動）
+        if random.random() < 0.2:
+            h, w = img.shape[:2]
+            n_patches = random.randint(1, 5)
+            for _ in range(n_patches):
+                ph, pw = random.randint(h // 8, h // 4), random.randint(w // 8, w // 4)
+                py, px = random.randint(0, h - ph), random.randint(0, w - pw)
+                factor = random.uniform(0.3, 1.7)
+                img[py:py+ph, px:px+pw] = np.clip(img[py:py+ph, px:px+pw] * factor, 0, 255)
+        # 10. Random crop and resize（ランダムクロップ後リサイズ）
+        if random.random() < 0.3:
+            h, w = img.shape[:2]
+            crop_ratio = random.uniform(0.85, 0.95)
+            ch, cw = int(h * crop_ratio), int(w * crop_ratio)
+            cy = random.randint(0, h - ch)
+            cx = random.randint(0, w - cw)
+            cropped = img[cy:cy+ch, cx:cx+cw].astype(np.uint8)
+            img = cv2.resize(cropped, (w, h), interpolation=cv2.INTER_LINEAR).astype(np.float32)
         return img.astype(np.uint8)
 
     # 実X線の参照ヒストグラム（累積分布関数）をキャッシュ
@@ -1056,13 +1143,14 @@ def generate_dataset(args):
 
             label = make_yolo_label(rot_lm, "AP", drr.shape[0], drr.shape[1],
                                     vol_shape=rot_vol.shape, sid_mm=sid_mm, voxel_mm=vd['voxel_mm'])
+            carrying = compute_carrying_angle(rot_lm)
             split = "val" if i < int(args.n_ap * val_ratio) else "train"
             save_sample(drr_bgr, label, {
                 "view_type":          "AP",
                 "rotation_error_deg": round(rotation_err, 2),
                 "flexion_deg":        round(flexion, 2),
                 "base_flexion":       vd['base_flexion'],
-                "carrying_angle":     0.0,
+                "carrying_angle":     round(carrying, 2),
                 "valgus_deg":         round(valgus_deg, 2),
             }, split)
     else:
@@ -1084,16 +1172,19 @@ def generate_dataset(args):
                 vd['volume'], vd['landmarks'], rotation_err, flexion,
                 base_flexion=vd['base_flexion'], valgus_deg=valgus_deg,
             )
-            drr     = generate_drr(rot_vol, axis="LAT", sid_mm=sid_mm, voxel_mm=vd['voxel_mm'])
+            # 屈曲CT（<=120°）では前腕がML方向に曲がるため、AP軸投影が実際のLAT像に一致
+            lat_proj_axis = "AP" if vd['base_flexion'] <= 120 else "LAT"
+            drr     = generate_drr(rot_vol, axis=lat_proj_axis, sid_mm=sid_mm, voxel_mm=vd['voxel_mm'])
             drr_bgr = cv2.cvtColor(drr, cv2.COLOR_GRAY2BGR)
 
-            label = make_yolo_label(rot_lm, "LAT", drr.shape[0], drr.shape[1],
+            label = make_yolo_label(rot_lm, lat_proj_axis, drr.shape[0], drr.shape[1],
                                     vol_shape=rot_vol.shape, sid_mm=sid_mm, voxel_mm=vd['voxel_mm'])
+            measured_flexion = compute_flexion_angle(rot_lm)
             split = "val" if i < int(args.n_lat * val_ratio) else "train"
             save_sample(drr_bgr, label, {
                 "view_type":          "LAT",
                 "rotation_error_deg": round(rotation_err, 2),
-                "flexion_deg":        round(flexion, 2),
+                "flexion_deg":        round(measured_flexion, 2),
                 "base_flexion":       vd['base_flexion'],
                 "carrying_angle":     0.0,
                 "valgus_deg":         round(valgus_deg, 2),
