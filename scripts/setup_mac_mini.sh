@@ -9,13 +9,13 @@
 #   4. SSDへの保存
 #
 # 使い方:
-#   cd ~/Dev/vision/ElbowVision
+#   cd ~/develop/Dev/vision/ElbowVision
 #   bash scripts/setup_mac_mini.sh
 # ============================================================
 
 set -euo pipefail
 
-PROJECT_DIR="$HOME/Dev/vision/ElbowVision"
+PROJECT_DIR="$HOME/develop/Dev/vision/ElbowVision"
 VENV_DIR="$PROJECT_DIR/elbow-api/venv"
 CT_DIR="$PROJECT_DIR/data/raw_dicom/ct/"
 

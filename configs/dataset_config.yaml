@@ -11,7 +11,7 @@ out_dir: data/drr_dataset_512
 target_size: 512
 sid: 1000.0          # X線管焦点-検出器間距離 (mm)
 
-# 屈曲角度ステップ
+# 屈曲角度ステップ（DRR生成時の目標屈曲範囲）
 num_flexion_steps: 20       # 0-135度を20段階 (約6.75度刻み)
 num_rotation_per_flexion: 10  # 各屈曲角で10種の回転バリエーション
 
@@ -32,14 +32,16 @@ n_ap: 600               # AP像: 20steps * 10rot * 3noise = 600 (x2 laterality =
 n_lat: 600              # LAT像: 同上
 
 # --- HUウィンドウ ---
-hu_min: -200.0           # ファントム推奨値
-hu_max: 1000.0           # ファントム推奨値
+hu_min: 50.0             # ファントム最適化値（外殻プラスチック除外）
+hu_max: 800.0            # ファントム最適化値（骨上限に合わせ）
 
 # --- ドメイン適応augmentation ---
 domain_aug: true
 
 # --- 複数シリーズ設定（オプション） ---
-# series_nums: "4,8,12"
+# 現在: 単一シリーズ（伸展位 ~180°）
+# 45°/90° CT追加時の形式:
+# series_nums: "1,2,3"
 # base_flexions: "180,135,90"
 
 # --- データ分割 ---

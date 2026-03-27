@@ -28,7 +28,7 @@ OsteoVision の OsteoSynth/yolo_pose_factory.py を肘用に移植。
   - これからのズレ量を訓練ラベルとして使用
 
 【使い方（複数シリーズ・ファントム対応）】
-  cd /Users/kohei/Dev/vision/ElbowVision
+  cd /Users/kohei/develop/Dev/vision/ElbowVision
   source elbow-api/venv/bin/activate
 
   # 単一CTシリーズ
@@ -358,11 +358,13 @@ def load_ct_volume(dicom_dir: str, target_size: int = 128, laterality: str = Non
 # ← CT 撮影後、ITK-SNAP 等で実測してここを更新する
 
 DEFAULT_LANDMARKS_NORMALIZED = {
-    "humerus_shaft":      (0.20, 0.50, 0.50),   # 上腕骨幹部（近位）
-    "lateral_epicondyle": (0.48, 0.50, 0.65),   # 外側上顆（ML方向 外側寄り）
-    "medial_epicondyle":  (0.48, 0.50, 0.35),   # 内側上顆（ML方向 内側寄り）
-    "forearm_shaft":      (0.75, 0.50, 0.50),   # 前腕骨幹部（遠位）
-    "joint_center":       (0.48, 0.50, 0.50),   # 関節中心（回転軸）
+    "humerus_shaft":      (0.05, 0.50, 0.49),   # 上腕骨幹部（近位）
+    "lateral_epicondyle": (0.30, 0.50, 0.80),   # 外側上顆（ML方向 外側寄り）
+    "medial_epicondyle":  (0.30, 0.50, 0.19),   # 内側上顆（ML方向 内側寄り）
+    "forearm_shaft":      (0.55, 0.50, 0.49),   # 前腕骨幹部（遠位）
+    "radial_head":        (0.38, 0.43, 0.70),   # 橈骨頭（外側前方）
+    "olecranon":          (0.30, 0.63, 0.49),   # 肘頭（後方）
+    "joint_center":       (0.30, 0.50, 0.49),   # 関節中心（回転軸）
 }
 
 
@@ -490,13 +492,13 @@ def generate_drr(volume: np.ndarray, axis: str = "AP",
     line_integral = mu_volume.sum(axis=2)
     # 正規化: 最大線積分が target_max_attenuation になるようスケール
     li_max = line_integral.max() + 1e-8
-    target_max_attenuation = 4.0  # 骨で exp(-4)≈0.018、空気で exp(0)=1
+    target_max_attenuation = 2.5  # 骨で exp(-2.5)≈0.082、空気で exp(0)=1
     line_integral = line_integral * (target_max_attenuation / li_max)
     # I = I_0 * exp(-∫μ dx) → 透過強度
     transmission = np.exp(-line_integral)
 
     # ── 散乱線シミュレーション（簡易版） ──
-    scatter_fraction = 0.03  # 散乱線割合（3%: 控えめに）
+    scatter_fraction = 0.15  # 散乱線割合（15%: 実X線に近い値）
     intensity = (1.0 - scatter_fraction) * transmission + scatter_fraction
 
     # ── ヒール効果（X線管からの距離による強度低下の簡易近似） ──
@@ -529,7 +531,7 @@ def generate_drr(volume: np.ndarray, axis: str = "AP",
     img[bg_mask] = 0.0  # 背景は完全黒
 
     # ── ガンマ補正（レントゲンフィルムの特性曲線を模倣） ──
-    gamma = 0.7  # 骨の濃淡差を強調
+    gamma = 1.0  # リニア（実X線に近い）
     img = np.power(img + 1e-8, gamma)
     img[bg_mask] = 0.0
 
@@ -538,7 +540,7 @@ def generate_drr(volume: np.ndarray, axis: str = "AP",
     img_u8 = cv2.GaussianBlur(img_u8, (3, 3), 0.5)
 
     # CLAHE（局所的なコントラスト強調、控えめに）
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
     return clahe.apply(img_u8)
 
 
@@ -550,6 +552,7 @@ def rotate_volume_and_landmarks(
     forearm_rotation_deg: float,
     flexion_deg: float,
     base_flexion: float = 90.0,
+    valgus_deg: float = 0.0,
 ) -> tuple:
     """
     正準方向ボリュームに対して、前腕回旋と肘屈曲を適用する。
@@ -579,6 +582,23 @@ def rotate_volume_and_landmarks(
       rotated_landmarks: 回転後のキーポイント座標（正規化）
     """
     pd, ap, ml = volume.shape
+
+    # ── valgus（内反・外反）: ポジショニング誤差のため全体ボリュームに適用 ──
+    if abs(valgus_deg) > 1e-6:
+        R_val = rotation_matrix_y(valgus_deg)
+        R_val_inv = R_val.T
+        vol_center = np.array([pd / 2.0, ap / 2.0, ml / 2.0])
+        offset_val = vol_center - R_val_inv @ vol_center
+        volume = affine_transform(
+            volume, R_val_inv, offset=offset_val, order=1, mode='constant', cval=0.0
+        )
+        # ランドマークも同じ回転を適用
+        rotated_lm_val = {}
+        for name, (nPD, nAP, nML) in landmarks_norm.items():
+            p = np.array([nPD * pd, nAP * ap, nML * ml]) - vol_center
+            p_rot = R_val @ p + vol_center
+            rotated_lm_val[name] = (p_rot[0] / pd, p_rot[1] / ap, p_rot[2] / ml)
+        landmarks_norm = rotated_lm_val
 
     # 回転軸: joint_center（解剖学的関節中心）を優先
     if "joint_center" in landmarks_norm:
@@ -973,7 +993,37 @@ def generate_dataset(args):
         if random.random() < 0.4:
             ksize = random.choice([3, 5])
             img = cv2.GaussianBlur(img.astype(np.uint8), (ksize, ksize), 0).astype(np.float32)
+        # 5. ヒストグラムマッチング（実X線の輝度分布に寄せる、50%の確率で適用）
+        if random.random() < 0.5:
+            img = _histogram_match_to_real(img.astype(np.uint8)).astype(np.float32)
         return img.astype(np.uint8)
+
+    # 実X線の参照ヒストグラム（累積分布関数）をキャッシュ
+    _real_xray_cdfs = {}
+    real_xray_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                  "data", "real_xray", "images")
+    for _rxf in ["008_AP.png", "008_LAT.png"]:
+        _rxp = os.path.join(real_xray_dir, _rxf)
+        if os.path.exists(_rxp):
+            _rx = cv2.imread(_rxp, cv2.IMREAD_GRAYSCALE)
+            _h = cv2.calcHist([_rx], [0], None, [256], [0, 256]).ravel()
+            _cdf = _h.cumsum()
+            _cdf = _cdf / (_cdf[-1] + 1e-8)
+            _real_xray_cdfs[_rxf] = _cdf
+    _real_cdf_list = list(_real_xray_cdfs.values()) if _real_xray_cdfs else []
+
+    def _histogram_match_to_real(img_u8: np.ndarray) -> np.ndarray:
+        """DRRのヒストグラムを実X線画像にマッチング"""
+        if not _real_cdf_list:
+            return img_u8
+        ref_cdf = random.choice(_real_cdf_list)
+        src_hist = cv2.calcHist([img_u8], [0], None, [256], [0, 256]).ravel()
+        src_cdf = src_hist.cumsum()
+        src_cdf = src_cdf / (src_cdf[-1] + 1e-8)
+        lut = np.zeros(256, dtype=np.uint8)
+        for s in range(256):
+            lut[s] = np.argmin(np.abs(ref_cdf - src_cdf[s]))
+        return lut[img_u8]
 
     def save_sample(drr, label_str, meta: dict, split: str):
         nonlocal img_idx
@@ -987,59 +1037,69 @@ def generate_dataset(args):
 
     # ── AP 像生成 ──
     # base_flexion が最大のボリュームをサイクルで使用（最も伸展した CT が AP に最適）
-    print(f"\nGenerating {args.n_ap} AP DRRs...")
-    for i in range(args.n_ap):
-        vd  = ap_vols[i % len(ap_vols)]
-        rotation_err = random.uniform(-25.0, 25.0)
-        # 目標屈曲角: CT実ポジション周辺 ±10°（AP範囲 150〜180°にクランプ）
-        flex_center  = max(150.0, min(180.0, vd['base_flexion']))
-        flexion      = max(150.0, min(180.0, random.uniform(flex_center - 10.0, flex_center + 10.0)))
+    if "AP" in args.views:
+        print(f"\nGenerating {args.n_ap} AP DRRs...")
+        for i in range(args.n_ap):
+            vd  = ap_vols[i % len(ap_vols)]
+            rotation_err = random.uniform(-25.0, 25.0)
+            valgus_deg   = random.uniform(-10.0, 10.0)
+            # 目標屈曲角: CT実ポジション周辺 ±10°（AP範囲 150〜180°にクランプ）
+            flex_center  = max(150.0, min(180.0, vd['base_flexion']))
+            flexion      = max(150.0, min(180.0, random.uniform(flex_center - 10.0, flex_center + 10.0)))
 
-        rot_vol, rot_lm = rotate_volume_and_landmarks(
-            vd['volume'], vd['landmarks'], rotation_err, flexion,
-            base_flexion=vd['base_flexion'],
-        )
-        drr     = generate_drr(rot_vol, axis="AP", sid_mm=sid_mm, voxel_mm=vd['voxel_mm'])
-        drr_bgr = cv2.cvtColor(drr, cv2.COLOR_GRAY2BGR)
+            rot_vol, rot_lm = rotate_volume_and_landmarks(
+                vd['volume'], vd['landmarks'], rotation_err, flexion,
+                base_flexion=vd['base_flexion'], valgus_deg=valgus_deg,
+            )
+            drr     = generate_drr(rot_vol, axis="AP", sid_mm=sid_mm, voxel_mm=vd['voxel_mm'])
+            drr_bgr = cv2.cvtColor(drr, cv2.COLOR_GRAY2BGR)
 
-        label = make_yolo_label(rot_lm, "AP", drr.shape[0], drr.shape[1],
-                                vol_shape=rot_vol.shape, sid_mm=sid_mm, voxel_mm=vd['voxel_mm'])
-        split = "val" if i < int(args.n_ap * val_ratio) else "train"
-        save_sample(drr_bgr, label, {
-            "view_type":          "AP",
-            "rotation_error_deg": round(rotation_err, 2),
-            "flexion_deg":        round(flexion, 2),
-            "base_flexion":       vd['base_flexion'],
-            "carrying_angle":     0.0,
-        }, split)
+            label = make_yolo_label(rot_lm, "AP", drr.shape[0], drr.shape[1],
+                                    vol_shape=rot_vol.shape, sid_mm=sid_mm, voxel_mm=vd['voxel_mm'])
+            split = "val" if i < int(args.n_ap * val_ratio) else "train"
+            save_sample(drr_bgr, label, {
+                "view_type":          "AP",
+                "rotation_error_deg": round(rotation_err, 2),
+                "flexion_deg":        round(flexion, 2),
+                "base_flexion":       vd['base_flexion'],
+                "carrying_angle":     0.0,
+                "valgus_deg":         round(valgus_deg, 2),
+            }, split)
+    else:
+        print("\nSkipping AP DRR generation (--views does not include AP)")
 
     # ── LAT 像生成 ──
     # base_flexion が最小のボリュームをサイクルで使用（最も屈曲した CT が LAT に最適）
-    print(f"Generating {args.n_lat} LAT DRRs...")
-    for i in range(args.n_lat):
-        vd  = lat_vols[i % len(lat_vols)]
-        rotation_err = random.uniform(-30.0, 30.0)
-        # 目標屈曲角: CT実ポジション周辺 ±20°（LAT範囲 60〜120°にクランプ）
-        flex_center  = max(60.0, min(120.0, vd['base_flexion']))
-        flexion      = max(60.0, min(120.0, random.uniform(flex_center - 20.0, flex_center + 20.0)))
+    if "LAT" in args.views:
+        print(f"Generating {args.n_lat} LAT DRRs...")
+        for i in range(args.n_lat):
+            vd  = lat_vols[i % len(lat_vols)]
+            rotation_err = random.uniform(-30.0, 30.0)
+            valgus_deg   = random.uniform(-8.0, 8.0)
+            # 目標屈曲角: CT実ポジション周辺 ±20°（LAT範囲 60〜120°にクランプ）
+            flex_center  = max(60.0, min(120.0, vd['base_flexion']))
+            flexion      = max(60.0, min(120.0, random.uniform(flex_center - 20.0, flex_center + 20.0)))
 
-        rot_vol, rot_lm = rotate_volume_and_landmarks(
-            vd['volume'], vd['landmarks'], rotation_err, flexion,
-            base_flexion=vd['base_flexion'],
-        )
-        drr     = generate_drr(rot_vol, axis="LAT", sid_mm=sid_mm, voxel_mm=vd['voxel_mm'])
-        drr_bgr = cv2.cvtColor(drr, cv2.COLOR_GRAY2BGR)
+            rot_vol, rot_lm = rotate_volume_and_landmarks(
+                vd['volume'], vd['landmarks'], rotation_err, flexion,
+                base_flexion=vd['base_flexion'], valgus_deg=valgus_deg,
+            )
+            drr     = generate_drr(rot_vol, axis="LAT", sid_mm=sid_mm, voxel_mm=vd['voxel_mm'])
+            drr_bgr = cv2.cvtColor(drr, cv2.COLOR_GRAY2BGR)
 
-        label = make_yolo_label(rot_lm, "LAT", drr.shape[0], drr.shape[1],
-                                vol_shape=rot_vol.shape, sid_mm=sid_mm, voxel_mm=vd['voxel_mm'])
-        split = "val" if i < int(args.n_lat * val_ratio) else "train"
-        save_sample(drr_bgr, label, {
-            "view_type":          "LAT",
-            "rotation_error_deg": round(rotation_err, 2),
-            "flexion_deg":        round(flexion, 2),
-            "base_flexion":       vd['base_flexion'],
-            "carrying_angle":     0.0,
-        }, split)
+            label = make_yolo_label(rot_lm, "LAT", drr.shape[0], drr.shape[1],
+                                    vol_shape=rot_vol.shape, sid_mm=sid_mm, voxel_mm=vd['voxel_mm'])
+            split = "val" if i < int(args.n_lat * val_ratio) else "train"
+            save_sample(drr_bgr, label, {
+                "view_type":          "LAT",
+                "rotation_error_deg": round(rotation_err, 2),
+                "flexion_deg":        round(flexion, 2),
+                "base_flexion":       vd['base_flexion'],
+                "carrying_angle":     0.0,
+                "valgus_deg":         round(valgus_deg, 2),
+            }, split)
+    else:
+        print("Skipping LAT DRR generation (--views does not include LAT)")
 
     # dataset.yaml 生成
     yaml_path = os.path.join(out_dir, "dataset.yaml")
@@ -1064,7 +1124,8 @@ def generate_dataset(args):
     # カラム: filename, split, view_type, rotation_error_deg, flexion_deg, carrying_angle
     convnext_csv_path = os.path.join(out_dir, "convnext_labels.csv")
     convnext_fields = ["filename", "split", "view_type",
-                       "rotation_error_deg", "flexion_deg", "carrying_angle"]
+                       "rotation_error_deg", "flexion_deg", "carrying_angle",
+                       "valgus_deg"]
     with open(convnext_csv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=convnext_fields, extrasaction="ignore")
         writer.writeheader()
@@ -1107,6 +1168,7 @@ def _apply_config_to_namespace(ns: argparse.Namespace, config: dict):
         'hu_min':         'hu_min',
         'hu_max':         'hu_max',
         'train_val_split': 'train_val_split',
+        'views':          'views',
     }
     for yaml_key, attr_name in key_map.items():
         if yaml_key in config and not hasattr(ns, f'_cli_{attr_name}'):
@@ -1142,6 +1204,8 @@ def main():
                         help="HUウィンドウ下限（ファントム推奨: -200、デフォルト: -400）")
     parser.add_argument("--hu_max",       type=float, default=None,
                         help="HUウィンドウ上限（ファントム推奨: 1000、デフォルト: 1500）")
+    parser.add_argument("--views",        default="AP,LAT",
+                        help="生成するビュー（カンマ区切り: AP,LAT / AP / LAT）")
     args = parser.parse_args()
 
     # YAML設定の読み込み・マージ
@@ -1167,6 +1231,9 @@ def main():
     # train_val_split をargsに保持（generate_dataset で使用可能）
     if not hasattr(args, 'train_val_split'):
         args.train_val_split = 0.85
+
+    # --views をリストにパース
+    args.views = [v.strip() for v in args.views.split(",")]
 
     generate_dataset(args)
 

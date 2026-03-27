@@ -2,7 +2,7 @@
 ElbowVision 論文用図表生成スクリプト
 
 使い方:
-  cd /Users/kohei/Dev/vision/ElbowVision
+  cd /Users/kohei/develop/Dev/vision/ElbowVision
   source elbow-api/venv/bin/activate
   python scripts/generate_figures.py [--out_dir results/figures]
 

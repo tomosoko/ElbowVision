@@ -5,11 +5,11 @@ OsteoVision の train_angle_predictor.py を肘用に移植。
 
 【使い方】
   # 訓練（アノテーション後）
-  cd /Users/kohei/Dev/vision/ElbowVision/elbow-api
+  cd /Users/kohei/develop/Dev/vision/ElbowVision/elbow-api
   source venv/bin/activate
   python training/train_angle_predictor.py \
-    --csv  ../data/yolo_dataset/convnext_labels.csv \
-    --imgs ../data/yolo_dataset/images/
+    --csv  ../data/yolo_dataset_v2/convnext_labels.csv \
+    --imgs ../data/yolo_dataset_v2/images/
 
   # 保存先: elbow-api/elbow_convnext_best.pth（API が自動で読み込む）
 

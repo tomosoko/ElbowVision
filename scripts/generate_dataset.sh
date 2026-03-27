@@ -11,7 +11,7 @@
 # 6. 結果サマリー出力
 #
 # 使い方:
-#   cd ~/Dev/vision/ElbowVision
+#   cd ~/develop/Dev/vision/ElbowVision
 #   bash scripts/generate_dataset.sh [--step N] [--config PATH]
 #
 # オプション:

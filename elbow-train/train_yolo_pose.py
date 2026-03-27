@@ -36,6 +36,9 @@ def main():
 
     yaml_candidates = [
         os.path.join(
+            os.path.dirname(__file__), "..", "data", "yolo_dataset_v2", "dataset.yaml"
+        ),
+        os.path.join(
             os.path.dirname(__file__), "..", "data", "yolo_dataset", "dataset.yaml"
         ),
         os.path.join(os.path.dirname(__file__), "dataset.yaml"),
