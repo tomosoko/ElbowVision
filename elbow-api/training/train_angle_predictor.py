@@ -241,10 +241,10 @@ def train(args):
     val_ds = ElbowDataset("/tmp/_val_split.csv", args.imgs, val_transform)
 
     train_loader = DataLoader(
-        train_ds, batch_size=args.batch, shuffle=True, num_workers=10
+        train_ds, batch_size=args.batch, shuffle=True, num_workers=0
     )
     val_loader = DataLoader(
-        val_ds, batch_size=args.batch, shuffle=False, num_workers=10
+        val_ds, batch_size=args.batch, shuffle=False, num_workers=0
     )
 
     model = ElbowConvNeXt(pretrained=True).to(device)
