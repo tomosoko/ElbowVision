@@ -1074,11 +1074,34 @@ def generate_dataset(args):
     def apply_domain_aug(drr_bgr: np.ndarray) -> np.ndarray:
         """DRR画像に実X線らしさを付与するaugmentation。--domain_aug 指定時のみ使用。"""
         img = drr_bgr.copy().astype(np.float32)
+        # 0a. 軽いガウスブラー（DRR回転時の補間アーティファクト平滑化）
+        if random.random() < 0.6:
+            blur_sigma = random.uniform(0.5, 1.0)
+            img = cv2.GaussianBlur(img.astype(np.uint8), (0, 0), blur_sigma).astype(np.float32)
+        # 0b. 骨テクスチャ合成（海綿骨の梁構造を模擬するPerlin風ノイズ）
+        if random.random() < 0.5:
+            h, w = img.shape[:2]
+            # 多スケールノイズで梁状パターンを生成
+            tex = np.zeros((h, w), dtype=np.float32)
+            for octave_size in [16, 32, 64]:
+                small = np.random.randn(max(1, h // octave_size),
+                                        max(1, w // octave_size)).astype(np.float32)
+                tex += cv2.resize(small, (w, h),
+                                  interpolation=cv2.INTER_CUBIC) / 3.0
+            # 骨領域マスク（高輝度=骨）にのみ適用
+            gray = cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img.astype(np.uint8)
+            bone_mask = (gray > np.percentile(gray, 60)).astype(np.float32)
+            bone_mask = cv2.GaussianBlur(bone_mask, (15, 15), 0)
+            strength = random.uniform(4.0, 12.0)
+            if img.ndim == 3:
+                img = np.clip(img + (tex * bone_mask * strength)[..., None], 0, 255)
+            else:
+                img = np.clip(img + tex * bone_mask * strength, 0, 255)
         # 1. ガウスノイズ（X線量子ノイズ相当）
         noise = np.random.normal(0, random.uniform(3, 12), img.shape).astype(np.float32)
         img = np.clip(img + noise, 0, 255)
         # 2. コントラスト・輝度ランダム変動
-        alpha = random.uniform(0.75, 1.25)   # コントラスト
+        alpha = random.uniform(0.70, 1.15)   # コントラスト（DRR高コントラスト補正）
         beta  = random.uniform(-20, 20)      # 輝度
         img = np.clip(alpha * img + beta, 0, 255)
         # 3. ガンマ補正（軟部組織コントラスト変動）
