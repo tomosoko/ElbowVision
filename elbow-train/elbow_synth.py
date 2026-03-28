@@ -590,7 +590,7 @@ def rotate_volume_and_landmarks(
         vol_center = np.array([pd / 2.0, ap / 2.0, ml / 2.0])
         offset_val = vol_center - R_val_inv @ vol_center
         volume = affine_transform(
-            volume, R_val_inv, offset=offset_val, order=1, mode='constant', cval=0.0
+            volume, R_val_inv, offset=offset_val, order=3, mode='constant', cval=0.0
         )
         # ランドマークも同じ回転を適用
         rotated_lm_val = {}
@@ -628,7 +628,7 @@ def rotate_volume_and_landmarks(
     # 前腕部分だけ回転したボリュームを生成
     offset_forearm = center - R_inv @ center
     forearm_rotated = affine_transform(
-        volume, R_inv, offset=offset_forearm, order=1, mode='constant', cval=0.0
+        volume, R_inv, offset=offset_forearm, order=3, mode='constant', cval=0.0
     )
 
     # ブレンドマスク: 0=上腕(元のまま), 1=前腕(回転後)
