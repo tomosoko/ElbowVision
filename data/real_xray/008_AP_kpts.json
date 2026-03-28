@@ -26,6 +26,21 @@
       "y": 1262.1086956521738,
       "x_norm": 0.5029499061853002,
       "y_norm": 0.6573482789855072
+    },
+    "radial_head": {
+      "x": 886.7546583850931,
+      "y": 1003.1024844720496,
+      "x_norm": 0.5773142307194616,
+      "y_norm": 0.5224492106625258,
+      "note": "estimated from AP image - needs verification"
+    },
+    "olecranon": {
+      "x": 674.7360248447205,
+      "y": 887.947204968944,
+      "x_norm": 0.4392812661749483,
+      "y_norm": 0.46247250258799166,
+      "note": "estimated from AP image (occluded in AP view) - needs verification"
     }
-  }
+  },
+  "needs_manual_verification": true
 }

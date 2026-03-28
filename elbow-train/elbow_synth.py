@@ -821,27 +821,64 @@ def auto_detect_landmarks(volume: np.ndarray, bone_threshold: float = None,
     """
     pd_size, ap_size, ml_size = volume.shape
 
-    # Otsu法で骨閾値を自動決定（ファントム・実骨の素材差に対応）
+    # 2段階Otsu法で骨の内部高密度構造を検出
+    # ファントムの場合: 外形が均一円筒のため、外殻だけでは上顆検出不可。
+    # 内部の皮質骨・海綿骨構造のコントラストを利用する。
     if bone_threshold is None:
         flat = volume.flatten()
-        # Otsu: ヒストグラムで二値化閾値を自動計算
-        hist, bin_edges = np.histogram(flat, bins=256)
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-        total = hist.sum()
-        w0, w1, mu0, mu1 = 0.0, 1.0, 0.0, float((hist * bin_centers).sum() / total)
-        best_var, best_thresh = 0.0, 0.5
-        for i in range(len(hist)):
-            w0 += hist[i] / total
-            w1 = 1.0 - w0
-            if w0 == 0 or w1 == 0:
-                continue
-            mu0 = (mu0 * (w0 * total - hist[i]) + bin_centers[i] * hist[i]) / (w0 * total) if w0 * total > 0 else 0
-            mu1 = (float((hist[i+1:] * bin_centers[i+1:]).sum()) / (w1 * total)) if w1 * total > 0 else 0
-            var = w0 * w1 * (mu0 - mu1) ** 2
-            if var > best_var:
-                best_var, best_thresh = var, bin_centers[i]
-        bone_threshold = best_thresh
-        print(f"  骨閾値 (Otsu自動): {bone_threshold:.3f}")
+
+        def _otsu(values):
+            """1D Otsu閾値を返す"""
+            hist, bin_edges = np.histogram(values, bins=256)
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            total = hist.sum()
+            best_var, best_thresh = 0.0, float(bin_centers[len(bin_centers)//2])
+            cumsum_w = 0.0
+            cumsum_mu = 0.0
+            mu_total = float((hist * bin_centers).sum())
+            for i in range(len(hist)):
+                cumsum_w += hist[i]
+                cumsum_mu += hist[i] * bin_centers[i]
+                w0 = cumsum_w / total
+                w1 = 1.0 - w0
+                if w0 == 0 or w1 == 0:
+                    continue
+                mu0 = cumsum_mu / cumsum_w
+                mu1 = (mu_total - cumsum_mu) / (total - cumsum_w)
+                var = w0 * w1 * (mu0 - mu1) ** 2
+                if var > best_var:
+                    best_var, best_thresh = var, bin_centers[i]
+            return best_thresh
+
+        # Stage 1: 空気 vs 物体を分離
+        thresh1 = _otsu(flat)
+        # Stage 2: 物体内部で低密度 vs 高密度を分離（骨内部構造の検出）
+        foreground = flat[flat > thresh1]
+        if len(foreground) > 100:
+            thresh2 = _otsu(foreground)
+        else:
+            thresh2 = thresh1
+
+        # 高密度閾値を使用（上顆などの内部構造を検出するため）
+        bone_threshold = thresh2
+
+        # 検証: 高密度閾値でPD方向のML幅にバリエーションがあるか確認
+        test_mask = volume > bone_threshold
+        ml_ws = []
+        for pd_i in range(pd_size):
+            ml_proj = test_mask[pd_i].any(axis=0)
+            idx = np.where(ml_proj)[0]
+            ml_ws.append(idx.max() - idx.min() if len(idx) >= 2 else 0)
+        if len(set(ml_ws)) <= 3:
+            # バリエーション不足 → さらに閾値を上げる（P90を使用）
+            p90 = float(np.percentile(foreground, 70))
+            if p90 > bone_threshold:
+                bone_threshold = p90
+                print(f"  骨閾値 (2段階Otsu+P70補正): {bone_threshold:.3f}")
+            else:
+                print(f"  骨閾値 (2段階Otsu): {bone_threshold:.3f}")
+        else:
+            print(f"  骨閾値 (2段階Otsu): {bone_threshold:.3f}")
     else:
         print(f"  骨閾値 (指定値): {bone_threshold:.3f}")
 
@@ -933,11 +970,26 @@ def auto_detect_landmarks(volume: np.ndarray, bone_threshold: float = None,
         "forearm_shaft":      (fore_pd_norm,  fore_ap, fore_ml),
         "radial_head":        (rh_pd_norm,    rh_ap,   rh_ml),
         "olecranon":          (ol_pd_norm,    ol_ap,   ol_ml),
-        "joint_center":       (joint_pd_norm, epic_ap, (lat_ml + med_ml) / 2),
     }
+
+    # ── 回転中心（joint_center）: 滑車溝〜小頭中心 ──────────────────────────
+    # 解剖学的に肘の屈曲/伸展軸は上顆中点ではなく、
+    # 滑車溝中心〜小頭中心を結ぶ線上にある（上顆中点よりやや前方）。
+    # 上顆レベルのスライスで前方50%の骨重心をAP方向の回転中心とする。
+    jc_sl = bone_mask[int(pd_size * joint_pd_norm)]  # (AP, ML)
+    jc_anterior_mask = jc_sl.copy()
+    jc_anterior_mask[int(ap_size * 0.55):, :] = False  # 後方を除外（肘頭側）
+    jc_yx = np.where(jc_anterior_mask)
+    if len(jc_yx[0]) > 0:
+        jc_ap = float(jc_yx[0].mean()) / ap_size  # 前方骨重心
+    else:
+        jc_ap = epic_ap  # フォールバック: 上顆AP中点
+    jc_ml = (lat_ml + med_ml) / 2
+    landmarks["joint_center"] = (joint_pd_norm, jc_ap, jc_ml)
 
     print(f"  自動検出結果 ({laterality}腕):")
     print(f"    上顆レベル    PD={joint_pd_norm:.2f}  外側上顆 ML={lat_ml:.2f}  内側上顆 ML={med_ml:.2f}")
+    print(f"    回転中心     PD={joint_pd_norm:.2f}  AP={jc_ap:.2f}  ML={jc_ml:.2f} (滑車/小頭中心)")
     print(f"    上腕骨幹部   PD={hum_pd_norm:.2f}  AP={hum_ap:.2f}  ML={hum_ml:.2f}")
     print(f"    前腕骨幹部   PD={fore_pd_norm:.2f}  AP={fore_ap:.2f}  ML={fore_ml:.2f}")
     print(f"    橈骨頭       PD={rh_pd_norm:.2f}  AP={rh_ap:.2f}  ML={rh_ml:.2f}")

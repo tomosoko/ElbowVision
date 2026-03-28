@@ -26,6 +26,21 @@
       "y": 971.9844720496893,
       "x_norm": 0.1328266530797102,
       "y_norm": 0.5062419125258798
+    },
+    "radial_head": {
+      "x": 840.9782608695652,
+      "y": 1050.1832298136644,
+      "x_norm": 0.5475118885869565,
+      "y_norm": 0.5469704321946168,
+      "note": "estimated from LAT image - needs verification"
+    },
+    "olecranon": {
+      "x": 670.9782608695652,
+      "y": 970.1832298136644,
+      "x_norm": 0.4368348052536232,
+      "y_norm": 0.5053037655279502,
+      "note": "estimated from LAT image - needs verification"
     }
-  }
+  },
+  "needs_manual_verification": true
 }

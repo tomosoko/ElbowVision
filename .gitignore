@@ -47,11 +47,7 @@ out/
 *.onnx
 
 # Data（大容量・git管理外）
-data/raw_dicom/
-data/yolo_dataset*/
-data/drr_dataset*/
-data/drr_test/
-data/real_xray/
+data/
 ct volume/
 results/
 runs/

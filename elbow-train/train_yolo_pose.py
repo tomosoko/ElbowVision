@@ -32,14 +32,14 @@ from ultralytics import YOLO
 def main():
     print("ElbowVision: YOLOv8-Pose 訓練パイプライン開始")
 
-    model = YOLO("yolov8n-pose.pt")
+    model = YOLO(os.path.join(os.path.dirname(__file__), "yolov8s-pose.pt"))
 
     yaml_candidates = [
         os.path.join(
-            os.path.dirname(__file__), "..", "data", "yolo_dataset_v2", "dataset.yaml"
+            os.path.dirname(__file__), "..", "data", "yolo_dataset", "dataset.yaml"
         ),
         os.path.join(
-            os.path.dirname(__file__), "..", "data", "yolo_dataset", "dataset.yaml"
+            os.path.dirname(__file__), "..", "data", "yolo_dataset_v2", "dataset.yaml"
         ),
         os.path.join(os.path.dirname(__file__), "dataset.yaml"),
         os.path.join(os.path.dirname(__file__), "..", "data", "dataset.yaml"),
