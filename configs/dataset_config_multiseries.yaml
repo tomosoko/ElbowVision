@@ -25,7 +25,7 @@ n_lat: 600
 
 # --- HUウィンドウ (ファントム最適化済み) ---
 hu_min: 50.0
-hu_max: 800.0
+hu_max: 1000.0              # 骨等価樹脂P95=972HUをカバー
 
 # --- ドメイン適応augmentation ---
 domain_aug: true
