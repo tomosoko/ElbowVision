@@ -19,22 +19,23 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from elbow_synth import (
     load_ct_volume, auto_detect_landmarks,
     rotate_volume_and_landmarks, generate_drr, make_yolo_label,
+    compute_carrying_angle, compute_flexion_angle,
 )
 
 # ── 設定 ──────────────────────────────────────────────────────────────────────
 
-CT_DIR    = "data/raw_dicom/ct_all/"
-OUT_DIR   = "data/yolo_dataset_v3"
-LATERALITY = "L"
-SERIES     = [(3, 180.0), (7, 135.0), (11, 90.0)]
-HU_MIN, HU_MAX = 50, 800
-TARGET_SIZE = 512
-SID_MM     = 1000.0
-N_AP       = 600
+CT_DIR    = "data/raw_dicom/ct_volume/ﾃｽﾄ 008_0009900008_20260310_108Y_F_000"
+OUT_DIR   = "data/yolo_dataset_production"
+LATERALITY = "R"
+SERIES     = [(4, 180.0), (8, 135.0), (12, 90.0)]  # FC85骨カーネル
+HU_MIN, HU_MAX = 50, 1000  # 骨等価樹脂P95=972HUをカバー
+TARGET_SIZE = 256
+SID_MM     = 1000.0  # CR実X線のSIDと一致
+N_AP       = 300
 N_LAT      = 600
 VAL_RATIO  = 0.15
 DOMAIN_AUG = True
-N_WORKERS  = 10  # M4 Pro 12コア → 10ワーカー
+N_WORKERS  = 10  # M4 Pro 12コア → 10ワーカー（OS+他に余裕）
 
 # ── グローバル変数（fork で子プロセスに共有） ────────────────────────────────
 
@@ -58,21 +59,46 @@ def init_real_cdfs():
 
 
 def apply_domain_aug(drr_bgr):
-    """DRR画像に実X線らしさを付与するaugmentation"""
+    """DRR画像に実X線らしさを付与するaugmentation（elbow_synth.py改善版と同期）"""
     img = drr_bgr.copy().astype(np.float32)
+    # 0a. 回転アーティファクト均一化ブラー（60%）
+    if random.random() < 0.6:
+        sigma = random.uniform(0.5, 1.0)
+        img = cv2.GaussianBlur(img.astype(np.uint8), (0, 0), sigma).astype(np.float32)
+    # 0b. 骨テクスチャ合成（50%）
+    if random.random() < 0.5:
+        h, w = img.shape[:2] if img.ndim == 3 else (img.shape[0], img.shape[1])
+        texture = np.zeros((h, w), dtype=np.float32)
+        for scale in [16, 32, 64]:
+            noise_small = np.random.randn(max(1, h // scale), max(1, w // scale)).astype(np.float32)
+            noise_up = cv2.resize(noise_small, (w, h), interpolation=cv2.INTER_LINEAR)
+            texture += noise_up / (scale ** 0.5)
+        gray = img[:, :, 0] if img.ndim == 3 else img
+        bone_mask = (gray > np.percentile(gray, 60)).astype(np.float32)
+        bone_mask = cv2.GaussianBlur(bone_mask, (5, 5), 2.0)
+        strength = random.uniform(4.0, 12.0)
+        texture_masked = texture * bone_mask * strength
+        if img.ndim == 3:
+            img += texture_masked[:, :, None]
+        else:
+            img += texture_masked
+        img = np.clip(img, 0, 255)
+    # 1. ガウスノイズ
     noise = np.random.normal(0, random.uniform(3, 12), img.shape).astype(np.float32)
     img = np.clip(img + noise, 0, 255)
-    alpha = random.uniform(0.75, 1.25)
+    # 2. コントラスト・輝度（実X線に近づけるため控えめ）
+    alpha = random.uniform(0.70, 1.15)
     beta = random.uniform(-20, 20)
     img = np.clip(alpha * img + beta, 0, 255)
+    # 3. ガンマ補正
     gamma = random.uniform(0.7, 1.4)
-    inv_gamma = 1.0 / gamma
-    lut = (np.arange(256, dtype=np.float32) / 255.0) ** inv_gamma * 255.0
+    lut = (np.arange(256, dtype=np.float32) / 255.0) ** (1.0 / gamma) * 255.0
     img = lut[img.astype(np.uint8)]
+    # 4. ブラー（40%）
     if random.random() < 0.4:
         ksize = random.choice([3, 5])
         img = cv2.GaussianBlur(img.astype(np.uint8), (ksize, ksize), 0).astype(np.float32)
-    # ヒストグラムマッチング（50%）
+    # 5. ヒストグラムマッチング（50%）
     if random.random() < 0.5 and _real_cdfs:
         ref_cdf = random.choice(_real_cdfs)
         img_u8 = img.astype(np.uint8)
