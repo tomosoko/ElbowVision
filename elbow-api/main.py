@@ -15,6 +15,8 @@ import cv2
 import numpy as np
 import base64
 
+from med_image_pipeline import apply_windowing, apply_clahe_to_gray, apply_gaussian_blur
+
 # DICOMメタデータの欠損に対して寛容に処理
 pydicom.config.enforce_valid_values = False
 
@@ -189,16 +191,6 @@ async def health_check():
 
 
 # ─── 共通ユーティリティ ─────────────────────────────────────────────────────────
-def apply_windowing(image_array, center, width):
-    if center is None or width is None:
-        return image_array
-    lower = center - (width / 2.0)
-    upper = center + (width / 2.0)
-    windowed = np.clip(image_array, lower, upper)
-    windowed = ((windowed - lower) / width) * 255.0
-    return windowed.astype(np.uint8)
-
-
 def pct(v, total):
     return round(v / total * 100, 2)
 
@@ -344,9 +336,8 @@ def validate_angle_with_edges(image_array: np.ndarray, primary_angle: float) -> 
     gray = cv2.cvtColor(image_array, cv2.COLOR_BGR2GRAY) if len(image_array.shape) == 3 else image_array.copy()
     gray = gray.astype(np.uint8)
 
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    enhanced = clahe.apply(gray)
-    blurred = cv2.GaussianBlur(enhanced, (3, 3), 0)
+    enhanced = apply_clahe_to_gray(gray, clip_limit=2.0, tile_grid_size=(8, 8))
+    blurred = apply_gaussian_blur(enhanced, kernel_size=(3, 3))
     otsu_thresh, _ = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     edges = cv2.Canny(blurred, otsu_thresh * 0.4, otsu_thresh)
 
@@ -554,9 +545,8 @@ def detect_bone_landmarks_classical(image_array: np.ndarray) -> dict:
         gray = image_array.copy()
 
     gray = gray.astype(np.uint8)
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-    enhanced = clahe.apply(gray)
-    blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
+    enhanced = apply_clahe_to_gray(gray, clip_limit=3.0, tile_grid_size=(8, 8))
+    blurred = apply_gaussian_blur(enhanced, kernel_size=(5, 5))
 
     _, bone_mask = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     kernel = np.ones((7, 7), np.uint8)
