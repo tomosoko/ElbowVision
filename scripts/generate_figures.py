@@ -60,14 +60,13 @@ def generate_fig1_pipeline(out_path: str) -> None:
 
     # ボックス定義: (x_center, y_center, label, color)
     boxes = [
-        (1.0, 2.5, "CT Acquisition\n(Elbow Phantom)", "#E3F2FD"),
-        (3.2, 2.5, "DRR Generation\n(ElbowSynth)", "#E8F5E9"),
-        (5.4, 2.5, "YOLOv8-Pose\nTraining", "#FFF3E0"),
-        (7.6, 2.5, "ConvNeXt\nRegression", "#F3E5F5"),
-        (9.0, 1.0, "Real-time\nInference", "#FFEBEE"),
+        (1.2, 2.5, "CT Acquisition\n(Elbow Phantom)", "#E3F2FD"),
+        (3.5, 2.5, "DRR Generation\n(ElbowSynth)", "#E8F5E9"),
+        (5.8, 2.5, "ConvNeXt-Small\nTraining", "#F3E5F5"),
+        (8.2, 2.5, "Flexion Angle\nEstimation", "#FFEBEE"),
     ]
 
-    box_w, box_h = 1.8, 1.0
+    box_w, box_h = 1.9, 1.0
 
     for xc, yc, label, color in boxes:
         rect = FancyBboxPatch(
@@ -80,17 +79,10 @@ def generate_fig1_pipeline(out_path: str) -> None:
                 fontsize=8.5, fontweight="bold", color="#333333")
 
     # 矢印（箱から箱へ）
-    arrow_style = "Simple,tail_width=3,head_width=10,head_length=6"
-    arrow_kw = dict(
-        arrowstyle=arrow_style, color="#555555", lw=1.0,
-        connectionstyle="arc3,rad=0.0",
-    )
-
     arrows = [
-        ((1.9, 2.5), (2.3, 2.5)),   # CT -> DRR
-        ((4.1, 2.5), (4.5, 2.5)),   # DRR -> YOLO
-        ((6.3, 2.5), (6.7, 2.5)),   # YOLO -> ConvNeXt
-        ((8.2, 2.0), (8.5, 1.5)),   # ConvNeXt -> Inference
+        ((2.15, 2.5), (2.55, 2.5)),   # CT -> DRR
+        ((4.45, 2.5), (4.85, 2.5)),   # DRR -> ConvNeXt
+        ((6.75, 2.5), (7.25, 2.5)),   # ConvNeXt -> Inference
     ]
     for start, end in arrows:
         ax.annotate("", xy=end, xytext=start,
@@ -99,21 +91,17 @@ def generate_fig1_pipeline(out_path: str) -> None:
 
     # 下段: データフロー注釈
     annotations = [
-        (1.0, 1.5, "DICOM\nvolume", "#78909C"),
-        (3.2, 1.5, "Synthetic X-ray\n+ auto-labels", "#78909C"),
-        (5.4, 1.5, "Keypoint\ndetection", "#78909C"),
-        (7.6, 1.5, "Positioning\nerror (deg)", "#78909C"),
+        (1.2, 1.5, "DICOM volume\n(extension CT)", "#78909C"),
+        (3.5, 1.5, "Synthetic X-rays\n+ auto-labels (n=1,365)", "#78909C"),
+        (5.8, 1.5, "ImageNet\npre-trained", "#78909C"),
+        (8.2, 1.5, "MAE 1.41°\nICC 0.9989", "#2e7d32"),
     ]
     for xc, yc, text, color in annotations:
         ax.text(xc, yc, text, ha="center", va="center",
                 fontsize=7, color=color, style="italic")
-        ax.annotate("", xy=(xc, 1.85), xytext=(xc, 2.0),
+        ax.annotate("", xy=(xc, 1.9), xytext=(xc, 2.05),
                      arrowprops=dict(arrowstyle="-", color="#BDBDBD",
                                      lw=0.8, linestyle="--"))
-
-    # 入力画像注釈
-    ax.text(9.0, 0.3, "X-ray image\n(real or DRR)", ha="center",
-            va="center", fontsize=7, color="#78909C", style="italic")
 
     # タイトル
     ax.text(5.0, 3.3, "Fig. 1  ElbowVision System Pipeline",
@@ -334,77 +322,73 @@ def _draw_placeholder(ax):
 # =====================================================================
 
 def generate_fig4_bland_altman(out_path: str) -> None:
-    """Bland-Altmanプロット。bland_altman.pyのcompute関数を利用。"""
-    # bland_altman.pyをインポート
+    """Bland-Altmanプロット。実データ(results/bland_altman/predictions.csv)を使用。"""
+    import pandas as pd
+
     scripts_dir = os.path.join(PROJECT_ROOT, "scripts")
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
 
-    from bland_altman import compute_bland_altman, BlandAltmanResult
+    from bland_altman import compute_bland_altman
 
-    # ダミーデータ生成（実データがあれば差し替え可能）
-    np.random.seed(2026)
-    n = 60
+    # 実データ読み込み
+    pred_csv = os.path.join(PROJECT_ROOT, "results", "bland_altman", "predictions.csv")
+    if not os.path.isfile(pred_csv):
+        print(f"  WARNING: 実データが見つかりません: {pred_csv}")
+        print("  先に scripts/eval_angle_estimator.py を実行してください")
+        return
 
-    # Carrying angle: GT vs Pred
-    gt_carrying = np.random.uniform(5, 20, n)
-    pred_carrying = gt_carrying + np.random.normal(0.3, 1.8, n)
+    df = pd.read_csv(pred_csv)
+    gt_flexion   = df["gt_flexion_deg"].to_numpy(dtype=float)
+    pred_flexion = df["pred_flexion_deg"].to_numpy(dtype=float)
 
-    # Flexion: GT vs Pred
-    gt_flexion = np.random.uniform(30, 150, n)
-    pred_flexion = gt_flexion + np.random.normal(-0.5, 3.0, n)
+    result = compute_bland_altman(gt_flexion, pred_flexion)
+    mean_vals = (gt_flexion + pred_flexion) / 2
+    diff_vals = pred_flexion - gt_flexion
 
-    datasets = [
-        ("Carrying Angle", gt_carrying, pred_carrying, "deg"),
-        ("Flexion Angle", gt_flexion, pred_flexion, "deg"),
-    ]
+    fig, ax = plt.subplots(figsize=(7, 5.5))
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    # Scatter
+    ax.scatter(mean_vals, diff_vals, color="#3b82f6", alpha=0.65, s=30,
+               edgecolors="white", linewidths=0.4, zorder=5)
 
-    for idx, (name, gt, pred, unit) in enumerate(datasets):
-        ax = axes[idx]
-        result = compute_bland_altman(gt, pred)
-        mean_vals = (gt + pred) / 2
-        diff_vals = pred - gt
+    # 平均バイアス
+    ax.axhline(result.mean_diff, color="#16a34a", linewidth=2.0,
+               label=f"Mean bias: {result.mean_diff:+.2f}°")
 
-        # Scatter
-        ax.scatter(mean_vals, diff_vals, color="#3b82f6", alpha=0.7, s=35,
-                   edgecolors="white", linewidths=0.5, zorder=5)
+    # 95% LoA
+    ax.axhline(result.loa_upper, color="#dc2626", linewidth=1.5,
+               linestyle="--",
+               label=f"Upper LoA: {result.loa_upper:+.2f}°")
+    ax.axhline(result.loa_lower, color="#dc2626", linewidth=1.5,
+               linestyle="--",
+               label=f"Lower LoA: {result.loa_lower:+.2f}°")
 
-        # Mean bias
-        ax.axhline(result.mean_diff, color="#22c55e", linewidth=2,
-                   label=f"Mean bias: {result.mean_diff:+.2f}$^\\circ$")
+    # ゼロライン
+    ax.axhline(0, color="gray", linewidth=0.8, alpha=0.5, linestyle=":")
 
-        # LoA
-        ax.axhline(result.loa_upper, color="#ef4444", linewidth=1.5,
-                   linestyle="--",
-                   label=f"+1.96SD: {result.loa_upper:+.2f}$^\\circ$")
-        ax.axhline(result.loa_lower, color="#ef4444", linewidth=1.5,
-                   linestyle="--",
-                   label=f"-1.96SD: {result.loa_lower:+.2f}$^\\circ$")
+    ax.set_xlabel("Mean of CT-derived Ground Truth and Prediction [°]")
+    ax.set_ylabel("Difference (Prediction − Ground Truth) [°]")
+    ax.set_title("Flexion Angle Estimation", fontweight="bold")
+    ax.legend(fontsize=9, loc="upper right")
+    ax.grid(True, alpha=0.25)
 
-        ax.axhline(0, color="gray", linewidth=0.8, alpha=0.5)
-
-        ax.set_xlabel(f"Mean of GT and Prediction [{unit}]")
-        ax.set_ylabel(f"Difference (Pred - GT) [{unit}]")
-        ax.set_title(f"({chr(97 + idx)}) {name}", fontweight="bold")
-        ax.legend(fontsize=8, loc="upper right")
-        ax.grid(True, alpha=0.3)
-
-        # Stats text
-        stats_text = (
-            f"n={result.n}  "
-            f"MAE={result.mae:.2f}$^\\circ$  "
-            f"RMSE={result.rmse:.2f}$^\\circ$  "
-            f"ICC={result.icc:.3f}  "
-            f"$r^2$={result.r_squared:.3f}"
-        )
-        ax.text(0.02, 0.97, stats_text, transform=ax.transAxes,
-                fontsize=8, va="top", color="#6b7280")
+    # 統計サマリーテキスト
+    stats_text = (
+        f"n = {result.n}\n"
+        f"MAE = {result.mae:.3f}°\n"
+        f"RMSE = {result.rmse:.3f}°\n"
+        f"ICC(3,1) = {result.icc:.4f}\n"
+        f"$r^2$ = {result.r_squared:.4f}"
+    )
+    ax.text(0.03, 0.03, stats_text, transform=ax.transAxes,
+            fontsize=8.5, va="bottom", color="#374151",
+            bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
+                      edgecolor="#d1d5db", alpha=0.9))
 
     fig.suptitle(
-        "Fig. 4  Bland-Altman Analysis (Sample Data)",
-        fontsize=12, fontweight="bold", y=1.02,
+        "Fig. 4  Bland-Altman Analysis: DRR Validation Set (n=273)",
+        fontsize=11, fontweight="bold",
     )
     fig.tight_layout()
     fig.savefig(out_path)
