@@ -195,7 +195,8 @@ def main() -> None:
                         help="CSV: filename, gt_angle, laterality (省略可)")
     parser.add_argument("--model_path", default="runs/angle_estimator/best.pth")
     parser.add_argument("--series_num", type=int, default=4)
-    parser.add_argument("--laterality", default="L")
+    parser.add_argument("--laterality", default="R",
+                        help="DRR生成用のlaterality。左腕CTでもR指定でX線方向が合うことを確認済み")
     parser.add_argument("--hu_min", type=float, default=50.0)
     parser.add_argument("--hu_max", type=float, default=800.0)
     parser.add_argument("--out_dir", default="results/method_comparison")

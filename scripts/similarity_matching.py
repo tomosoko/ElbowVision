@@ -293,43 +293,72 @@ def match_angle_from_library(
     library_path: str,
     xray_img: np.ndarray,
     metric: str = "combined",
+    coarse_step: float = ANGLE_STEP,
+    fine_range: float = 10.0,
 ) -> MatchResult:
     """
     事前構築DRRライブラリを使った類似度マッチング（CT生成不要）。
     DRR生成をスキップするため 41s → ~1s に高速化。
 
+    非キャッシュ版と同じ2段階探索:
+      1. coarse_step 刻みでNCC粗探索
+      2. NCC最良値 ±fine_range 内でedge_ncc精密評価（combined用）
+
     Args:
         library_path: build_drr_library.py で生成した .npz ファイルパス
         xray_img:     実X線グレースケール画像 (numpy)
         metric:       "ncc" | "edge_ncc" | "combined"
+        coarse_step:  粗探索ステップ（°）
+        fine_range:   NCC最良値からの精密探索範囲（±°）
     """
     print(f"DRRライブラリ読み込み: {Path(library_path).name}")
     t0 = time.time()
-    angles, drrs, meta = load_drr_library(library_path)
-    n = len(angles)
-    print(f"  {n}角度 ({meta['angle_min']:.0f}°〜{meta['angle_max']:.0f}°, step={meta['angle_step']:.1f}°) "
+    angles_arr, drrs, meta = load_drr_library(library_path)
+    lib_step   = float(meta["angle_step"])
+    angle_min  = float(meta["angle_min"])
+    angle_max  = float(meta["angle_max"])
+    # angle → drr の高速辞書（1°解像度）
+    angle_to_drr: dict[float, np.ndarray] = {
+        float(angles_arr[i]): drrs[i] for i in range(len(angles_arr))
+    }
+    print(f"  {len(angles_arr)}角度 ({angle_min:.0f}°〜{angle_max:.0f}°, step={lib_step:.1f}°) "
           f"— 読込{time.time()-t0:.2f}s")
 
     xray_norm = preprocess_image(xray_img, apply_rot270=False, auto_crop=True)
     xray_edge = extract_edges(xray_norm)
-
     all_scores: dict[float, dict[str, float]] = {}
-    _primary   = "ncc" if metric == "combined" else metric
+    _primary = "ncc" if metric == "combined" else metric
 
-    print(f"  類似度計算: {n}角度 ...")
-    t1 = time.time()
-    for i in range(n):
-        angle    = float(angles[i])
-        drr_norm = drrs[i].astype(np.float32) / 255.0
+    def _score(angle: float) -> dict[str, float]:
+        nearest  = min(angle_to_drr.keys(), key=lambda a: abs(a - angle))
+        drr_norm = angle_to_drr[nearest].astype(np.float32) / 255.0
         drr_edge = extract_edges(drr_norm)
-        scores = {
-            "ncc":      ncc(drr_norm, xray_norm),
-            "edge_ncc": ncc(drr_edge, xray_edge),
-        }
-        all_scores[angle] = scores
-        if (i + 1) % 20 == 0 or i == n - 1:
-            print(f"\r  {i+1}/{n}: {angle:.1f}° → {_primary}={scores[_primary]:.4f}", end="", flush=True)
-    print(f"\n  計算完了: {time.time()-t1:.2f}s")
+        return {"ncc": ncc(drr_norm, xray_norm), "edge_ncc": ncc(drr_edge, xray_edge)}
+
+    # ── 粗探索 ──────────────────────────────────────────────────────────────
+    coarse_angles = np.arange(angle_min, angle_max + coarse_step, coarse_step).tolist()
+    print(f"  粗探索: {len(coarse_angles)}角度 (step={coarse_step}°) ...")
+    t1 = time.time()
+    for i, a in enumerate(coarse_angles):
+        all_scores[a] = _score(a)
+        print(f"\r  {i+1}/{len(coarse_angles)}: {a:.0f}° → {_primary}={all_scores[a][_primary]:.4f}",
+              end="", flush=True)
+    coarse_best = max(coarse_angles, key=lambda a: all_scores[a][_primary])
+    print(f"\n  粗探索最良: {coarse_best:.0f}° ({_primary}={all_scores[coarse_best][_primary]:.4f})")
+
+    # ── 精密探索（ライブラリ解像度 step=lib_step で fine_range 内）────────────
+    fine_min = max(angle_min, coarse_best - fine_range)
+    fine_max = min(angle_max, coarse_best + fine_range)
+    fine_angles = [a for a in np.arange(fine_min, fine_max + lib_step, lib_step).tolist()
+                   if round(a, 4) not in {round(k, 4) for k in all_scores}]
+    if fine_angles:
+        print(f"  精密探索: {len(fine_angles)}角度 (step={lib_step}°) ...")
+        for i, a in enumerate(fine_angles):
+            all_scores[a] = _score(a)
+            print(f"\r  {i+1}/{len(fine_angles)}: {a:.1f}° → {_primary}={all_scores[a][_primary]:.4f}",
+                  end="", flush=True)
+        print()
+    print(f"  計算完了: {time.time()-t1:.2f}s")
 
     if metric == "combined":
         best_ncc  = max(all_scores, key=lambda a: all_scores[a]["ncc"])
@@ -339,9 +368,8 @@ def match_angle_from_library(
     else:
         best_angle = float(max(all_scores, key=lambda a: all_scores[a][metric]))
 
-    # ベスト角度に最も近いDRRを可視化用に取得
-    closest_idx = int(np.argmin(np.abs(angles - best_angle)))
-    best_drr    = drrs[closest_idx]  # uint8
+    nearest  = min(angle_to_drr.keys(), key=lambda a: abs(a - best_angle))
+    best_drr = angle_to_drr[nearest]
 
     return MatchResult(
         best_angle=best_angle,
@@ -574,8 +602,10 @@ def main() -> None:
         if errors:
             print(f"MAE = {np.mean(np.abs(errors)):.2f}° (n={len(errors)})")
 
-    elif args.ct_dir and args.xray:
-        # 単一患者モード
+    elif args.xray:
+        # 単一患者モード（--library だけでも --ct_dir なしで動作）
+        if not args.ct_dir and not args.library:
+            parser.error("--xray 使用時は --ct_dir または --library が必要です")
         lib = str(_PROJECT_ROOT / args.library) if args.library else None
         run_single(
             ct_dir       = str(_PROJECT_ROOT / args.ct_dir) if args.ct_dir else "",
@@ -592,7 +622,7 @@ def main() -> None:
             library_path = lib,
         )
     else:
-        parser.error("--ct_dir と --xray、または --patient_list が必要です")
+        parser.error("--ct_dir と --xray、または --patient_list、または --library と --xray が必要です")
 
 
 if __name__ == "__main__":
