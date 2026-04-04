@@ -249,10 +249,20 @@ def match_angle(
         print()
 
     if metric == "combined":
-        # NCCとedge_nccの両ピークを求め、平均を最終推定値とする
         best_ncc  = max(all_scores, key=lambda a: all_scores[a]["ncc"])
         best_encc = max(all_scores, key=lambda a: all_scores[a]["edge_ncc"])
-        # edge_nccのピークが粗探索最良の±fine_range内になければfine探索追加
+        # edge_nccピークがfine探索済み範囲外であれば追加探索
+        extra_min = max(ANGLE_MIN, best_encc - fine_range)
+        extra_max = min(ANGLE_MAX, best_encc + fine_range)
+        extra_angles = [a for a in np.arange(extra_min, extra_max + fine_step, fine_step).tolist()
+                        if a not in all_scores]
+        if extra_angles:
+            print(f"    edge_ncc追加精密探索: {len(extra_angles)}角度 ({best_encc:.0f}°周辺) ...")
+            for angle in extra_angles:
+                _, drr = _run_angle(angle)
+                drr_norm = preprocess_image(drr)
+                all_scores[angle] = compute_similarity(drr_norm, xray_norm)
+            best_encc = max(all_scores, key=lambda a: all_scores[a]["edge_ncc"])
         best_angle = (best_ncc + best_encc) / 2.0
         print(f"    Combined: ncc={best_ncc:.1f}° + edge_ncc={best_encc:.1f}° → mean={best_angle:.1f}°")
     else:
