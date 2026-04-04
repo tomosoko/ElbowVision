@@ -250,8 +250,6 @@ def train(
         scheduler.step()
 
         epoch_loss = np.mean(losses)
-        # MAE in degrees
-        mae_norm = np.sqrt(epoch_loss) if epoch_loss > 0 else epoch_loss  # rough estimate
         print(f"  Epoch {epoch:3d}/{epochs} | loss={epoch_loss:.5f} | "
               f"lr={scheduler.get_last_lr()[0]:.2e} | {time.time()-t0:.1f}s")
 
@@ -295,7 +293,7 @@ def main() -> None:
     parser.add_argument("--out_dir",       default="runs/angle_estimator_finetuned")
     parser.add_argument("--epochs",        type=int,   default=100)
     parser.add_argument("--lr",            type=float, default=3e-6,
-                        help="���習率（DRR訓練の1/10 = 3e-6 推奨）")
+                        help="学習率（DRR訓練の1/10 = 3e-6 推奨）")
     parser.add_argument("--batch_size",    type=int,   default=8)
     parser.add_argument("--aug_factor",    type=int,   default=20,
                         help="データ拡張倍率（n_images × aug_factor = total）")
