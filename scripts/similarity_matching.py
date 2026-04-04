@@ -271,6 +271,86 @@ def match_angle(
     )
 
 
+# ── DRRライブラリ（キャッシュ）使用マッチング ────────────────────────────────────
+
+def load_drr_library(library_path: str) -> tuple[np.ndarray, np.ndarray, dict]:
+    """
+    build_drr_library.py で生成した .npz キャッシュを読み込む。
+    Returns: (angles, drrs, meta)
+      angles: float32 (N,)
+      drrs:   uint8   (N, H, W) — CLAHE適用済み
+      meta:   dict
+    """
+    import json as _json
+    data = np.load(library_path, allow_pickle=False)
+    angles = data["angles"]                  # float32 (N,)
+    drrs   = data["drrs"]                    # uint8   (N, H, W)
+    meta   = _json.loads(str(data["meta"]))
+    return angles, drrs, meta
+
+
+def match_angle_from_library(
+    library_path: str,
+    xray_img: np.ndarray,
+    metric: str = "combined",
+) -> MatchResult:
+    """
+    事前構築DRRライブラリを使った類似度マッチング（CT生成不要）。
+    DRR生成をスキップするため 41s → ~1s に高速化。
+
+    Args:
+        library_path: build_drr_library.py で生成した .npz ファイルパス
+        xray_img:     実X線グレースケール画像 (numpy)
+        metric:       "ncc" | "edge_ncc" | "combined"
+    """
+    print(f"DRRライブラリ読み込み: {Path(library_path).name}")
+    t0 = time.time()
+    angles, drrs, meta = load_drr_library(library_path)
+    n = len(angles)
+    print(f"  {n}角度 ({meta['angle_min']:.0f}°〜{meta['angle_max']:.0f}°, step={meta['angle_step']:.1f}°) "
+          f"— 読込{time.time()-t0:.2f}s")
+
+    xray_norm = preprocess_image(xray_img, apply_rot270=False, auto_crop=True)
+    xray_edge = extract_edges(xray_norm)
+
+    all_scores: dict[float, dict[str, float]] = {}
+    _primary   = "ncc" if metric == "combined" else metric
+
+    print(f"  類似度計算: {n}角度 ...")
+    t1 = time.time()
+    for i in range(n):
+        angle    = float(angles[i])
+        drr_norm = drrs[i].astype(np.float32) / 255.0
+        drr_edge = extract_edges(drr_norm)
+        scores = {
+            "ncc":      ncc(drr_norm, xray_norm),
+            "edge_ncc": ncc(drr_edge, xray_edge),
+        }
+        all_scores[angle] = scores
+        if (i + 1) % 20 == 0 or i == n - 1:
+            print(f"\r  {i+1}/{n}: {angle:.1f}° → {_primary}={scores[_primary]:.4f}", end="", flush=True)
+    print(f"\n  計算完了: {time.time()-t1:.2f}s")
+
+    if metric == "combined":
+        best_ncc  = max(all_scores, key=lambda a: all_scores[a]["ncc"])
+        best_encc = max(all_scores, key=lambda a: all_scores[a]["edge_ncc"])
+        best_angle = (best_ncc + best_encc) / 2.0
+        print(f"  Combined: ncc={best_ncc:.1f}° + edge_ncc={best_encc:.1f}° → mean={best_angle:.1f}°")
+    else:
+        best_angle = float(max(all_scores, key=lambda a: all_scores[a][metric]))
+
+    # ベスト角度に最も近いDRRを可視化用に取得
+    closest_idx = int(np.argmin(np.abs(angles - best_angle)))
+    best_drr    = drrs[closest_idx]  # uint8
+
+    return MatchResult(
+        best_angle=best_angle,
+        best_metric=metric,
+        scores=all_scores,
+        drr_at_best=best_drr,
+    )
+
+
 # ── 可視化 ────────────────────────────────────────────────────────────────────
 
 def save_result_figure(
@@ -356,27 +436,37 @@ def run_single(
     metric: str = "combined",
     patient_id: str = "patient",
     base_flexion: float = 180.0,
+    library_path: str | None = None,
 ) -> MatchResult:
     Path(out_dir).mkdir(parents=True, exist_ok=True)
-
-    print(f"CT読み込み: {ct_dir}")
-    volume, _, lat, voxel_mm = load_ct_volume(
-        ct_dir, laterality=laterality, series_num=series_num,
-        hu_min=hu_min, hu_max=hu_max, target_size=TARGET_SIZE,
-    )
-    landmarks   = auto_detect_landmarks(volume, laterality=lat)
 
     print(f"実X線読み込み: {xray_path}")
     xray_img = cv2.imread(xray_path, cv2.IMREAD_GRAYSCALE)
     if xray_img is None:
         raise FileNotFoundError(f"X線画像が読み込めません: {xray_path}")
 
-    print(f"類似度マッチング開始 (metric={metric}) ...")
     t0 = time.time()
-    result = match_angle(
-        volume, landmarks, lat, voxel_mm, base_flexion,
-        xray_img, metric=metric,
-    )
+
+    if library_path and Path(library_path).exists():
+        # ── ライブラリキャッシュから高速マッチング ──────────────────────────
+        print(f"類似度マッチング開始 (キャッシュ使用, metric={metric}) ...")
+        result = match_angle_from_library(library_path, xray_img, metric=metric)
+    else:
+        # ── オンザフライDRR生成（従来モード）────────────────────────────────
+        if library_path:
+            print(f"  [警告] ライブラリが見つかりません: {library_path} → オンザフライ生成にフォールバック")
+        print(f"CT読み込み: {ct_dir}")
+        volume, _, lat, voxel_mm = load_ct_volume(
+            ct_dir, laterality=laterality, series_num=series_num,
+            hu_min=hu_min, hu_max=hu_max, target_size=TARGET_SIZE,
+        )
+        landmarks = auto_detect_landmarks(volume, laterality=lat)
+        print(f"類似度マッチング開始 (metric={metric}) ...")
+        result = match_angle(
+            volume, landmarks, lat, voxel_mm, base_flexion,
+            xray_img, metric=metric,
+        )
+
     elapsed = time.time() - t0
 
     print(f"\n【結果】")
@@ -429,6 +519,8 @@ def main() -> None:
     parser.add_argument("--metric", type=str, default="combined",
                         choices=["ncc", "ssim", "edge_ncc", "combined"],
                         help="類似度メトリクス (default: combined = ncc+edge_ncc平均、バイアス打消し)")
+    parser.add_argument("--library", type=str, default=None,
+                        help="事前構築DRRライブラリ(.npz)パス。指定するとCT生成をスキップし高速化")
     args = parser.parse_args()
 
     out_dir = str(_PROJECT_ROOT / args.out_dir)
@@ -445,16 +537,17 @@ def main() -> None:
             pid = row["patient_id"]
             try:
                 result = run_single(
-                    ct_dir     = row["ct_dir"],
-                    xray_path  = row["xray_path"],
-                    out_dir    = os.path.join(out_dir, pid),
-                    laterality = row.get("laterality") or None,
-                    series_num = int(row["series_num"]) if row.get("series_num") else None,
-                    hu_min     = float(row.get("hu_min", 50)),
-                    hu_max     = float(row.get("hu_max", 800)),
-                    gt_angle   = float(row["gt_angle_deg"]) if row.get("gt_angle_deg") else None,
-                    metric     = args.metric,
-                    patient_id = pid,
+                    ct_dir       = row["ct_dir"],
+                    xray_path    = row["xray_path"],
+                    out_dir      = os.path.join(out_dir, pid),
+                    laterality   = row.get("laterality") or None,
+                    series_num   = int(row["series_num"]) if row.get("series_num") else None,
+                    hu_min       = float(row.get("hu_min", 50)),
+                    hu_max       = float(row.get("hu_max", 800)),
+                    gt_angle     = float(row["gt_angle_deg"]) if row.get("gt_angle_deg") else None,
+                    metric       = args.metric,
+                    patient_id   = pid,
+                    library_path = row.get("library_path") or args.library,
                 )
                 gt = float(row["gt_angle_deg"]) if row.get("gt_angle_deg") else None
                 summary_rows.append({
@@ -483,8 +576,9 @@ def main() -> None:
 
     elif args.ct_dir and args.xray:
         # 単一患者モード
+        lib = str(_PROJECT_ROOT / args.library) if args.library else None
         run_single(
-            ct_dir       = str(_PROJECT_ROOT / args.ct_dir),
+            ct_dir       = str(_PROJECT_ROOT / args.ct_dir) if args.ct_dir else "",
             xray_path    = str(_PROJECT_ROOT / args.xray),
             out_dir      = out_dir,
             laterality   = args.laterality,
@@ -495,6 +589,7 @@ def main() -> None:
             metric       = args.metric,
             patient_id   = Path(args.xray).stem,
             base_flexion = args.base_flexion,
+            library_path = lib,
         )
     else:
         parser.error("--ct_dir と --xray、または --patient_list が必要です")
