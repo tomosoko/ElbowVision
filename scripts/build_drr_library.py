@@ -129,7 +129,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="DRRライブラリ事前構築")
     parser.add_argument("--ct_dir", required=True)
     parser.add_argument("--out_path", required=True, help="出力 .npz ファイルパス")
-    parser.add_argument("--laterality", default="L")
+    parser.add_argument("--laterality", default="R",
+                        help="DRR生成用laterality。左腕CTでもR指定（R=ML軸反転でX線向きと一致）")
     parser.add_argument("--series_num", type=int, default=4)
     parser.add_argument("--hu_min", type=float, default=50.0)
     parser.add_argument("--hu_max", type=float, default=800.0)
