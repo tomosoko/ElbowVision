@@ -530,12 +530,32 @@ def match_angle_from_library(
 
     if metric == "combined":
         # combined metricは整数ピーク（±5°バイアス相殺を維持するため補間しない）
+        # edge_nccピーク周辺が NCC fine探索範囲外にある場合は追加精密探索
+        coarse_best_encc = max(coarse_angles, key=lambda a: all_scores[a]["edge_ncc"])
+        if abs(coarse_best_encc - coarse_best) > coarse_step:
+            e_min = max(angle_min, coarse_best_encc - fine_range)
+            e_max = min(angle_max, coarse_best_encc + fine_range)
+            extra = [a for a in np.arange(e_min, e_max + lib_step, lib_step).tolist()
+                     if round(a, 4) not in {round(k, 4) for k in all_scores}]
+            if extra:
+                print(f"  edge_ncc追加精密探索: {len(extra)}角度 ({coarse_best_encc:.0f}°周辺) ...")
+                for a in extra:
+                    all_scores[a] = _score(a)
         best_ncc_raw  = float(max(all_scores, key=lambda a: all_scores[a]["ncc"]))
         best_encc_raw = float(max(all_scores, key=lambda a: all_scores[a]["edge_ncc"]))
         best_angle = (best_ncc_raw + best_encc_raw) / 2.0
         print(f"  Combined: ncc={best_ncc_raw:.1f}° + edge_ncc={best_encc_raw:.1f}° → mean={best_angle:.1f}°")
     elif metric == "combined_nmi":
         # NCC(+5°バイアス) + NMI(-5°バイアス) の平均（combined と同等精度）
+        coarse_best_nmi = max(coarse_angles, key=lambda a: all_scores[a]["nmi"])
+        if abs(coarse_best_nmi - coarse_best) > coarse_step:
+            n_min = max(angle_min, coarse_best_nmi - fine_range)
+            n_max = min(angle_max, coarse_best_nmi + fine_range)
+            extra = [a for a in np.arange(n_min, n_max + lib_step, lib_step).tolist()
+                     if round(a, 4) not in {round(k, 4) for k in all_scores}]
+            if extra:
+                for a in extra:
+                    all_scores[a] = _score(a)
         best_ncc_raw = float(max(all_scores, key=lambda a: all_scores[a]["ncc"]))
         best_nmi_raw = float(max(all_scores, key=lambda a: all_scores[a]["nmi"]))
         best_angle = (best_ncc_raw + best_nmi_raw) / 2.0
@@ -548,8 +568,10 @@ def match_angle_from_library(
     best_drr = angle_to_drr[nearest]
 
     # 信頼度指標計算
+    # nearest は angle_to_drr のキー（all_scores にない場合に備えて all_scores のキーで近傍を探す）
+    nearest_scored = min(all_scores.keys(), key=lambda a: abs(a - best_angle))
     ncc_vals  = np.array([all_scores[a]["ncc"] for a in all_scores])
-    peak_ncc  = float(all_scores[nearest]["ncc"])
+    peak_ncc  = float(all_scores[nearest_scored]["ncc"])
     sharpness = float((peak_ncc - ncc_vals.mean()) / (ncc_vals.std() + 1e-8))
 
     return MatchResult(

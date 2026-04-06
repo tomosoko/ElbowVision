@@ -124,12 +124,13 @@ def main() -> None:
             }
 
         if args.metric == "combined":
-            best_ncc_a  = _parabolic_peak(all_scores, "ncc")
-            best_encc_a = _parabolic_peak(all_scores, "edge_ncc")
+            # 本番(match_angle_from_library)と同じ整数argmax方式で統一
+            best_ncc_a  = float(max(all_scores, key=lambda a: all_scores[a]["ncc"]))
+            best_encc_a = float(max(all_scores, key=lambda a: all_scores[a]["edge_ncc"]))
             best_a = (best_ncc_a + best_encc_a) / 2.0
         elif args.metric == "combined_nmi":
-            best_ncc_a  = _parabolic_peak(all_scores, "ncc")
-            best_nmi_a  = _parabolic_peak(all_scores, "nmi")
+            best_ncc_a  = float(max(all_scores, key=lambda a: all_scores[a]["ncc"]))
+            best_nmi_a  = float(max(all_scores, key=lambda a: all_scores[a]["nmi"]))
             best_a = (best_ncc_a + best_nmi_a) / 2.0
         else:
             best_a = _parabolic_peak(all_scores, args.metric)
@@ -194,7 +195,7 @@ def main() -> None:
             boundary_note = (
                 f"MAE (no boundary) = {int_errs.mean():.3f}° (n={len(interior_results)})\n"
                 f"  Note: boundary angles ({angle_min:.0f}°, {angle_max:.0f}°) have\n"
-                f"  systematic 1° error due to parabolic interpolation one-sided limit.\n"
+                f"  (boundary angles may have slightly higher error).\n"
             )
 
     summary_text = (
