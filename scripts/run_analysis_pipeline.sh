@@ -172,6 +172,20 @@ if should_run "metric_bias"; then
     fi
 fi
 
+# ── STEP 6c: LOO精度マップ図 ──────────────────────────────────────────────────
+if should_run "loo_fig"; then
+    hr "STEP 6c: LOO精度マップ図（fig9: GT vs Pred / Error / peak_ncc）"
+    LOO_CSV="results/self_test_loo/self_test_results.csv"
+    if [ ! -f "$BASE_DIR/$LOO_CSV" ]; then
+        skip "LOO CSVが存在しない（先にSTEP 1を実行）"
+    else
+        $PYTHON scripts/generate_loo_figure.py \
+            --loo_csv "$LOO_CSV" \
+            --out_dir results/figures/
+        ok "LOO精度マップ図完了 → results/figures/fig9_loo_accuracy.png"
+    fi
+fi
+
 # ── STEP 7: LaTeX テーブル生成 ────────────────────────────────────────────────
 if should_run "latex"; then
     hr "STEP 7: LaTeX テーブル自動生成"
