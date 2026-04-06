@@ -36,6 +36,27 @@ STEPS_ARG=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --steps) STEPS_ARG="$2"; shift 2 ;;
+        --help|-h)
+            echo "使い方: bash scripts/run_analysis_pipeline.sh [--steps STEP1,STEP2,...]"
+            echo ""
+            echo "利用可能なステップ:"
+            echo "  loo         STEP 1: DRR LOO検証（全121角度）"
+            echo "  metrics     STEP 2: メトリクス比較（実X線 NCC/edge-NCC/combined/NMI）"
+            echo "  robustness  STEP 3: 頑健性テスト"
+            echo "  confidence  STEP 4: 信頼度スコア解析"
+            echo "  ncc_curves  STEP 5: NCC曲線プロット（fig7）"
+            echo "  overview    STEP 6: 総合サマリー図（fig6）"
+            echo "  metric_bias STEP 6b: メトリクスバイアス図（fig8）"
+            echo "  domain_gap  STEP 6d: ドメインギャップ図（fig10）"
+            echo "  loo_fig     STEP 6c: LOO精度マップ図（fig9）"
+            echo "  latex       STEP 7: LaTeXテーブル生成"
+            echo ""
+            echo "例:"
+            echo "  bash scripts/run_analysis_pipeline.sh"
+            echo "  bash scripts/run_analysis_pipeline.sh --steps loo,latex"
+            echo "  bash scripts/run_analysis_pipeline.sh --steps loo_fig,domain_gap,latex"
+            exit 0
+            ;;
         *) echo "Unknown arg: $1"; exit 1 ;;
     esac
 done
