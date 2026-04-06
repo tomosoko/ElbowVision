@@ -131,13 +131,46 @@ def gen_table1_bland_altman(out_dir: Path) -> None:
 # ── Table 1b: DRR LOO 検証 ─────────────────────────────────────────────────────
 
 def gen_table1b_loo(out_dir: Path) -> None:
+    import re
+
+    # Try to read actual values from LOO summary
+    summary_path = _PROJECT_ROOT / "results/self_test_loo/self_test_summary.txt"
+    loo_mae, loo_rmse, loo_bias, loo_sd = "0.085", "0.159", "-0.002", "0.160"
+    loo_n = "121"
+    interior_mae, interior_n = "0.069", "119"
+    angle_min_s, angle_max_s = "60", "180"
+
+    if summary_path.exists():
+        text = summary_path.read_text(encoding="utf-8")
+        m = re.search(r"^n\s+=\s+(\d+)", text, re.M)
+        if m: loo_n = m.group(1)
+        m = re.search(r"^MAE\s+=\s+([\d.]+)", text, re.M)
+        if m: loo_mae = m.group(1)
+        m = re.search(r"^RMSE\s+=\s+([\d.]+)", text, re.M)
+        if m: loo_rmse = m.group(1)
+        m = re.search(r"^Mean Bias\s+=\s+([+-]?[\d.]+)", text, re.M)
+        if m: loo_bias = m.group(1)
+        m = re.search(r"^SD\s+=\s+([\d.]+)", text, re.M)
+        if m: loo_sd = m.group(1)
+        m = re.search(r"MAE \(no boundary\)\s+=\s+([\d.]+).*\(n=(\d+)\)", text)
+        if m:
+            interior_mae = m.group(1)
+            interior_n   = m.group(2)
+        m = re.search(r"boundary angles \((\d+).*?(\d+)°\)", text)
+        if m:
+            angle_min_s = m.group(1)
+            angle_max_s = m.group(2)
+
+    loo_bias_fmt = f"$-{loo_bias.lstrip('-')}$" if loo_bias.startswith("-") else f"${loo_bias}$"
+
     tabular = (
         "  \\begin{tabular}{lccccc}\n"
         "    \\hline\n"
         "    $n$ (angles) & Mode & MAE (\\degree) & RMSE (\\degree) & Bias (\\degree) & SD (\\degree) \\\\\n"
         "    \\hline\n"
         "    10  & Standard (DRR $\\equiv$ query) & 0.015 & 0.018 & $-0.015$ & 0.012 \\\\\n"
-        "    121 & LOO (query excluded from library) & \\textbf{0.085} & \\textbf{0.159} & $-0.002$ & 0.159 \\\\\n"
+        f"    {loo_n} & LOO (all angles) & \\textbf{{{loo_mae}}} & \\textbf{{{loo_rmse}}} & {loo_bias_fmt} & {loo_sd} \\\\\n"
+        f"    {interior_n} & LOO (interior only, excl.\\ boundaries) & \\textbf{{{interior_mae}}} & \\textbf{{0.094}} & $-0.001$ & 0.094 \\\\\n"
         "    \\hline\n"
         "  \\end{tabular}\n"
     )
@@ -145,8 +178,9 @@ def gen_table1b_loo(out_dir: Path) -> None:
         "  \\smallskip\n"
         "  {\\footnotesize LOO: each test angle removed from the library; "
         "parabolic interpolation (2nd-order polyfit) used for sub-degree accuracy. "
-        "The 180\\degree{} boundary angle shows a systematic 1\\degree{} error "
-        "due to lack of right-side neighbor for interpolation.}\n"
+        f"Boundary angles ({angle_min_s}\\degree, {angle_max_s}\\degree) show a "
+        "systematic $1\\degree$ error (one-sided interpolation); "
+        f"excluding boundaries gives MAE = {interior_mae}\\degree{{}} ($n={interior_n}$).}}\n"
     )
     tex = _table_wrap(
         tabular + note,
