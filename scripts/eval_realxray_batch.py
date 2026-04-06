@@ -38,7 +38,7 @@ sys.path.insert(0, str(_PROJECT_ROOT / "elbow-train"))
 sys.path.insert(0, str(_PROJECT_ROOT))
 
 
-def run_similarity(row: dict, out_dir: str) -> dict | None:
+def run_similarity(row: dict, out_dir: str, lib_cache=None) -> dict | None:
     """類似度マッチングで1画像を評価"""
     from scripts.similarity_matching import run_single
 
@@ -53,19 +53,37 @@ def run_similarity(row: dict, out_dir: str) -> dict | None:
     lib_path  = str(_PROJECT_ROOT / row["library_path"]) if row.get("library_path") else None
 
     t0 = time.time()
-    result = run_single(
-        ct_dir       = ct_dir,
-        xray_path    = xray_path,
-        out_dir      = os.path.join(out_dir, pid),
-        laterality   = laterality,
-        series_num   = series_num,
-        hu_min       = hu_min,
-        hu_max       = hu_max,
-        gt_angle     = gt_angle,
-        metric       = "combined",
-        patient_id   = pid,
-        library_path = lib_path,
-    )
+    if lib_cache is not None:
+        # プリロード済みキャッシュを使って直接マッチング
+        import cv2 as _cv2
+        xray_img = _cv2.imread(xray_path, _cv2.IMREAD_GRAYSCALE)
+        if xray_img is None:
+            raise FileNotFoundError(f"X線画像が読み込めません: {xray_path}")
+        match_result = lib_cache.match(xray_img)
+        # 可視化は run_single と同様に保存
+        _out = os.path.join(out_dir, pid)
+        os.makedirs(_out, exist_ok=True)
+
+        class _MatchResultCompat:
+            best_angle  = match_result.best_angle
+            peak_ncc    = match_result.peak_ncc
+            sharpness   = match_result.sharpness
+
+        result = _MatchResultCompat()
+    else:
+        result = run_single(
+            ct_dir       = ct_dir,
+            xray_path    = xray_path,
+            out_dir      = os.path.join(out_dir, pid),
+            laterality   = laterality,
+            series_num   = series_num,
+            hu_min       = hu_min,
+            hu_max       = hu_max,
+            gt_angle     = gt_angle,
+            metric       = "combined",
+            patient_id   = pid,
+            library_path = lib_path,
+        )
     elapsed = time.time() - t0
 
     return {
@@ -218,11 +236,23 @@ def main() -> None:
 
     print(f"評価開始: {len(patients)} X線画像")
 
+    # DRRLibraryCacheをライブラリパスごとに1つ作成（同一ライブラリを複数X線で共有）
+    from scripts.similarity_matching import DRRLibraryCache
+    _lib_caches: dict[str, DRRLibraryCache] = {}
+
+    def _get_cache(lib_path: str) -> DRRLibraryCache:
+        if lib_path not in _lib_caches:
+            _lib_caches[lib_path] = DRRLibraryCache(lib_path)
+        return _lib_caches[lib_path]
+
     results = []
     for i, row in enumerate(patients, 1):
         print(f"\n[{i}/{len(patients)}] {row['patient_id']} — {Path(row['xray_path']).name}")
         try:
-            r = run_similarity(row, out_dir)
+            r = run_similarity(row, out_dir,
+                               lib_cache=_get_cache(
+                                   str(_PROJECT_ROOT / row["library_path"])
+                               ) if row.get("library_path") else None)
             if r:
                 results.append(r)
                 if r["error_deg"] is not None:
@@ -233,7 +263,8 @@ def main() -> None:
             results.append({
                 "patient_id": row["patient_id"], "xray_path": row["xray_path"],
                 "gt_flexion_deg": row.get("gt_angle_deg"), "pred_flexion_deg": None,
-                "error_deg": None, "elapsed_s": 0, "note": f"ERROR: {e}",
+                "error_deg": None, "peak_ncc": None, "sharpness": None,
+                "elapsed_s": 0, "note": f"ERROR: {e}",
             })
 
     # CSV出力
