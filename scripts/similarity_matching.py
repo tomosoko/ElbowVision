@@ -619,18 +619,25 @@ def save_result_figure(
 
     # 類似度曲線
     ax0 = axes[0]
+    def _norm(v):
+        mn, mx = min(v), max(v)
+        return [(x - mn) / (mx - mn + 1e-8) for x in v]
+
     if metric == "combined":
         # NCC と edge_ncc の両曲線を重ねて表示
         ncc_vals  = [result.scores[a]["ncc"]      for a in angles]
         encc_vals = [result.scores[a]["edge_ncc"] for a in angles]
-        # 正規化して同一スケールに
-        def _norm(v):
-            mn, mx = min(v), max(v)
-            return [(x - mn) / (mx - mn + 1e-8) for x in v]
         ax0.plot(angles, _norm(ncc_vals),  "b-o", markersize=3, linewidth=1.2, label="NCC (norm)")
         ax0.plot(angles, _norm(encc_vals), "c-s", markersize=3, linewidth=1.0, label="edge_ncc (norm)")
         ax0.set_ylabel("Normalized Score")
         ax0.set_title("Similarity Curve\n(combined = NCC+edge_ncc)")
+    elif metric == "combined_nmi":
+        ncc_vals = [result.scores[a]["ncc"] for a in angles]
+        nmi_vals = [result.scores[a]["nmi"] for a in angles]
+        ax0.plot(angles, _norm(ncc_vals), "b-o", markersize=3, linewidth=1.2, label="NCC (norm)")
+        ax0.plot(angles, _norm(nmi_vals), "m-s", markersize=3, linewidth=1.0, label="NMI (norm)")
+        ax0.set_ylabel("Normalized Score")
+        ax0.set_title("Similarity Curve\n(combined_nmi = NCC+NMI)")
     else:
         values = [result.scores[a][metric] for a in angles]
         ax0.plot(angles, values, "b-o", markersize=3, linewidth=1.2)
