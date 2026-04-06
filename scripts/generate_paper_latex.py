@@ -145,11 +145,11 @@ def gen_table1_bland_altman(out_dir: Path) -> None:
 def gen_table1b_loo(out_dir: Path) -> None:
     import re
 
-    # Try to read actual values from LOO summary
-    summary_path = _PROJECT_ROOT / "results/self_test_loo/self_test_summary.txt"
-    loo_mae, loo_rmse, loo_bias, loo_sd = "0.085", "0.159", "-0.002", "0.160"
+    # Try to read actual values from LOO summary (integer argmax, production-consistent)
+    summary_path = _PROJECT_ROOT / "results/self_test/self_test_summary.txt"
+    loo_mae, loo_rmse, loo_bias, loo_sd = "0.545", "0.739", "-0.017", "0.741"
     loo_n = "121"
-    interior_mae, interior_rmse, interior_bias, interior_n = "0.069", "0.094", "-0.002", "119"
+    interior_mae, interior_rmse, interior_bias, interior_n = "0.538", "0.733", "-0.017", "119"
     angle_min_s, angle_max_s = "60", "180"
 
     def _parse_summary(path: Path, fields: dict) -> None:
@@ -215,10 +215,10 @@ def gen_table1b_loo(out_dir: Path) -> None:
     note = (
         "  \\smallskip\n"
         "  {\\footnotesize LOO: each test angle removed from the library; "
-        "parabolic interpolation (2nd-order polyfit) used for sub-degree accuracy. "
-        f"Boundary angles ({angle_min_s}\\degree, {angle_max_s}\\degree) show a "
-        "systematic $1\\degree$ error (one-sided interpolation); "
-        f"excluding boundaries gives MAE = {interior_mae}\\degree{{}} ($n={interior_n}$).}}\n"
+        "integer argmax used (production-consistent). "
+        f"Library step = 1\\degree, so LOO quantisation error is bounded by 1\\degree. "
+        f"Excluding boundary angles ({angle_min_s}\\degree, {angle_max_s}\\degree) "
+        f"gives MAE = {interior_mae}\\degree{{}} ($n={interior_n}$).}}\n"
     )
     tex = _table_wrap(
         tabular + note,
