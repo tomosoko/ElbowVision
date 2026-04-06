@@ -284,27 +284,62 @@ def gen_table2_method_comparison(out_dir: Path) -> None:
 
 def gen_table3_metric_comparison(out_dir: Path) -> None:
     """Summarizes bias analysis across similarity metrics"""
-    # Known values from evaluation
+    mc_csv = _PROJECT_ROOT / "results/metric_comparison/metric_comparison.csv"
+
+    # Fallback (hardcoded) values
     metric_data = [
-        # (metric_name, latex_name, bias_standard, mae_standard, note)
-        ("NCC",          "NCC",                   "+5.0", "5.0",  "Global intensity correlation"),
-        ("edge-NCC",     "Edge-NCC",              "−5.3", "5.3",  "Canny edge-based NCC"),
-        ("Combined",     "\\textbf{Combined}",    "−0.2", "\\textbf{0.2}",  "Mean of NCC and edge-NCC peaks"),
-        ("NMI",          "NMI",                   "−5.1", "5.1",  "Normalized mutual information"),
-        ("Combined-NMI", "\\textbf{Combined-NMI}","\\textbf{0.0}", "\\textbf{0.0}", "Mean of NCC and NMI peaks"),
+        # (col_key, latex_name, description, bold)
+        ("ncc",          "NCC",                              "Global intensity correlation", False),
+        ("edge_ncc",     "Edge-NCC",                         "Canny edge-based NCC",         False),
+        ("combined",     "\\textbf{Combined}",               "Mean of NCC and edge-NCC",     True),
+        ("nmi",          "NMI",                              "Normalized mutual information", False),
+        ("combined_nmi", "\\textbf{Combined-NMI}",           "Mean of NCC and NMI",          True),
     ]
+    fallback_bias = {
+        "ncc": "+5.0", "edge_ncc": "−5.3", "combined": "−0.2",
+        "nmi": "−5.1", "combined_nmi": "0.0",
+    }
+    fallback_mae = {
+        "ncc": "5.0", "edge_ncc": "5.3", "combined": "0.2",
+        "nmi": "5.1", "combined_nmi": "0.0",
+    }
+
+    # Read actual values if available
+    computed_bias: dict[str, float] = {}
+    computed_mae:  dict[str, float] = {}
+    n_std = 3
+    if mc_csv.exists():
+        mc_rows = []
+        with open(mc_csv) as f:
+            mc_rows = list(csv.DictReader(f))
+        std_rows_m = [r for r in mc_rows if "cr_008_2" not in r["filename"]]
+        n_std = len(std_rows_m)
+        for col_key, *_ in metric_data:
+            biases = [float(r[f"bias_{col_key}"]) for r in std_rows_m]
+            errs   = [float(r[f"err_{col_key}"])  for r in std_rows_m]
+            computed_bias[col_key] = sum(biases) / len(biases)
+            computed_mae[col_key]  = sum(errs)   / len(errs)
 
     row_lines = []
-    for name, latex_name, bias, mae, desc in metric_data:
-        row_lines.append(
-            f"    {latex_name} & {bias} & {mae} & {desc} \\\\"
-        )
+    for col_key, latex_name, desc, bold in metric_data:
+        if col_key in computed_bias:
+            b_val  = computed_bias[col_key]
+            m_val  = computed_mae[col_key]
+            b_str  = f"{b_val:+.1f}"
+            m_str  = f"{m_val:.1f}"
+        else:
+            b_str = fallback_bias[col_key]
+            m_str = fallback_mae[col_key]
+        if bold:
+            b_str = f"\\textbf{{{b_str}}}"
+            m_str = f"\\textbf{{{m_str}}}"
+        row_lines.append(f"    {latex_name} & {b_str} & {m_str} & {desc} \\\\")
 
     tabular = (
         "  \\begin{tabular}{lccl}\n"
         "    \\hline\n"
         "    Metric & Mean Bias (\\degree) & MAE (\\degree) & Description \\\\\n"
-        "           & Standard LAT ($n=3$) & Standard LAT ($n=3$) & \\\\\n"
+        f"           & Standard LAT ($n={n_std}$) & Standard LAT ($n={n_std}$) & \\\\\n"
         "    \\hline\n"
         + "\n".join(row_lines) + "\n"
         "    \\hline\n"
@@ -312,7 +347,7 @@ def gen_table3_metric_comparison(out_dir: Path) -> None:
     )
     note = (
         "  \\smallskip\n"
-        "  {\\footnotesize Standard LAT: 3 standard-positioned real phantom X-rays (GT $= 90\\degree$). "
+        f"  {{\\footnotesize Standard LAT: {n_std} standard-positioned real phantom X-rays (GT $= 90\\degree$). "
         "NCC and NMI both exhibit $\\approx\\pm5\\degree$ directional bias. "
         "Combined metrics cancel the bias by averaging two opposing-bias metrics. "
         "All metrics fail on non-standard positioning (1/4 images, error $\\approx85\\degree$).}\n"
