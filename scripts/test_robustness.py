@@ -124,25 +124,26 @@ def run_matching_with_perturbation(
     angle_max: float,
     coarse_step: float = 5.0,
     fine_range: float = 10.0,
+    metric: str = "combined",
 ) -> float:
     """
     劣化DRRをクエリとして、ライブラリとの類似度マッチングを実行。
-    combined metric (NCC + edge_NCC) を使用。
+    metric: "ncc" | "edge_ncc" | "combined" | "nmi" | "combined_nmi"
     """
-    from scripts.similarity_matching import _parabolic_peak, extract_edges, ncc, preprocess_image
+    from scripts.similarity_matching import _parabolic_peak, extract_edges, ncc, nmi
 
-    # 劣化DRRをそのまま正規化（ライブラリと同じ前処理済み空間に変換）
     xray_norm = perturbed_drr.astype(np.float32) / 255.0
     xray_edge = extract_edges(xray_norm)
 
     all_scores: dict[float, dict[str, float]] = {}
 
     def _score(angle: float) -> dict[str, float]:
-        nearest = min(angle_to_drr.keys(), key=lambda a: abs(a - angle))
+        nearest  = min(angle_to_drr.keys(), key=lambda a: abs(a - angle))
         drr_norm = angle_to_drr[nearest].astype(np.float32) / 255.0
         return {
             "ncc":      ncc(drr_norm, xray_norm),
             "edge_ncc": ncc(extract_edges(drr_norm), xray_edge),
+            "nmi":      nmi(drr_norm, xray_norm),
         }
 
     # 粗探索
@@ -150,20 +151,29 @@ def run_matching_with_perturbation(
     for a in coarse_angles:
         all_scores[a] = _score(a)
 
-    coarse_best_ncc = max(coarse_angles, key=lambda a: all_scores[a]["ncc"])
+    _primary = "ncc" if metric in ("combined", "combined_nmi") else metric
+    coarse_best = max(coarse_angles, key=lambda a: all_scores[a][_primary])
 
     # 精密探索
-    fine_min = max(angle_min, coarse_best_ncc - fine_range)
-    fine_max = min(angle_max, coarse_best_ncc + fine_range)
+    fine_min = max(angle_min, coarse_best - fine_range)
+    fine_max = min(angle_max, coarse_best + fine_range)
     fine_angles = [a for a in np.arange(fine_min, fine_max + 1.0, 1.0).tolist()
                    if round(a, 4) not in {round(k, 4) for k in all_scores}]
     for a in fine_angles:
         all_scores[a] = _score(a)
 
-    # combined metric (整数ピーク)
-    best_ncc  = float(max(all_scores, key=lambda a: all_scores[a]["ncc"]))
-    best_encc = float(max(all_scores, key=lambda a: all_scores[a]["edge_ncc"]))
-    pred_angle = (best_ncc + best_encc) / 2.0
+    # ピーク決定
+    if metric == "combined":
+        best_ncc  = float(max(all_scores, key=lambda a: all_scores[a]["ncc"]))
+        best_encc = float(max(all_scores, key=lambda a: all_scores[a]["edge_ncc"]))
+        pred_angle = (best_ncc + best_encc) / 2.0
+    elif metric == "combined_nmi":
+        best_ncc = float(max(all_scores, key=lambda a: all_scores[a]["ncc"]))
+        best_nmi = float(max(all_scores, key=lambda a: all_scores[a]["nmi"]))
+        pred_angle = (best_ncc + best_nmi) / 2.0
+    else:
+        pred_angle = _parabolic_peak(all_scores, metric)
+
     return pred_angle
 
 
@@ -177,6 +187,9 @@ def main() -> None:
     parser.add_argument("--out_dir", default="results/robustness")
     parser.add_argument("--perturbation", default="all",
                         choices=list(PERTURBATIONS.keys()) + ["all"])
+    parser.add_argument("--metric", default="combined",
+                        choices=["ncc", "edge_ncc", "combined", "nmi", "combined_nmi"],
+                        help="類似度メトリクス（デフォルト: combined）")
     args = parser.parse_args()
 
     from scripts.similarity_matching import load_drr_library
@@ -197,6 +210,7 @@ def main() -> None:
     test_angles_raw = [float(a.strip()) for a in args.test_angles.split(",")]
     test_angles = [min(angle_to_drr.keys(), key=lambda a: abs(a - ta)) for ta in test_angles_raw]
     print(f"テスト角度: {test_angles}")
+    print(f"メトリクス: {args.metric}")
 
     # 対象劣化
     target_perturbations = (
@@ -223,7 +237,8 @@ def main() -> None:
                 for _ in range(n_iter):
                     perturbed = func(test_drr, level)
                     pred = run_matching_with_perturbation(
-                        perturbed, angle_to_drr, gt_angle, angle_min, angle_max
+                        perturbed, angle_to_drr, gt_angle, angle_min, angle_max,
+                        metric=args.metric,
                     )
                     angle_errors.append(abs(pred - gt_angle))
                 errors.append(np.mean(angle_errors))
@@ -269,7 +284,7 @@ def main() -> None:
 
         colors = plt.cm.tab10.colors
 
-        summary_lines = ["Robustness Analysis — Similarity Matching (combined NCC)\n" + "="*55]
+        summary_lines = [f"Robustness Analysis — Similarity Matching ({args.metric})\n" + "="*55]
 
         for i, pert_name in enumerate(target_perturbations):
             pert = PERTURBATIONS[pert_name]
@@ -313,7 +328,7 @@ def main() -> None:
             axes[j].set_visible(False)
 
         fig.suptitle(
-            "Robustness to Image Degradation — Similarity Matching (combined NCC)\n"
+            f"Robustness to Image Degradation — Similarity Matching ({args.metric})\n"
             f"DRR library self-test, n={len(test_angles)} angles",
             fontsize=12, fontweight="bold",
         )
