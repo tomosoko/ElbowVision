@@ -534,6 +534,13 @@ def run_single(
     print(f"  処理時間 : {elapsed:.1f}s")
     print(f"  信頼度   : peak_ncc={result.peak_ncc:.4f}  sharpness={result.sharpness:.2f}")
 
+    # 低信頼度警告（DRR自己テスト基準: peak_ncc>0.9, sharpness>1.0）
+    if result.peak_ncc < 0.3:
+        print(f"  [警告] peak_ncc={result.peak_ncc:.4f} が低すぎます。"
+              f"ポジショニング・画像品質を確認してください。")
+    elif result.sharpness < 0.4:
+        print(f"  [警告] sharpness={result.sharpness:.2f} が低く、推定結果が不確かな可能性があります。")
+
     # スコアサマリーCSV保存
     scores_csv = Path(out_dir) / f"{patient_id}_scores.csv"
     with open(scores_csv, "w", newline="") as f:
