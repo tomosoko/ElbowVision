@@ -52,7 +52,7 @@ def main() -> None:
         help="テストするGT角度（カンマ区切り or 'all'）",
     )
     parser.add_argument("--metric", default="combined",
-                        choices=["ncc", "edge_ncc", "combined"])
+                        choices=["ncc", "edge_ncc", "combined", "nmi", "combined_nmi"])
     parser.add_argument("--coarse_step", type=float, default=5.0)
     parser.add_argument("--fine_range", type=float, default=10.0)
     parser.add_argument("--out_dir", default="results/self_test")
@@ -61,7 +61,7 @@ def main() -> None:
     args = parser.parse_args()
 
     from scripts.similarity_matching import load_drr_library, match_angle_from_library, \
-        _parabolic_peak, preprocess_image, extract_edges, ncc
+        _parabolic_peak, preprocess_image, extract_edges, ncc, nmi
 
     lib_path = _PROJECT_ROOT / args.library
     out_dir  = _PROJECT_ROOT / args.out_dir
@@ -113,12 +113,17 @@ def main() -> None:
             all_scores[a] = {
                 "ncc":      ncc(drr_norm, xray_norm),
                 "edge_ncc": ncc(extract_edges(drr_norm), xray_edge),
+                "nmi":      nmi(drr_norm, xray_norm),
             }
 
         if args.metric == "combined":
             best_ncc_a  = _parabolic_peak(all_scores, "ncc")
             best_encc_a = _parabolic_peak(all_scores, "edge_ncc")
             best_a = (best_ncc_a + best_encc_a) / 2.0
+        elif args.metric == "combined_nmi":
+            best_ncc_a  = _parabolic_peak(all_scores, "ncc")
+            best_nmi_a  = _parabolic_peak(all_scores, "nmi")
+            best_a = (best_ncc_a + best_nmi_a) / 2.0
         else:
             best_a = _parabolic_peak(all_scores, args.metric)
 
