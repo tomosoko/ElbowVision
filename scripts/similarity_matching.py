@@ -488,6 +488,9 @@ def match_angle_from_library(
         coarse_step:  粗探索ステップ（°）
         fine_range:   NCC最良値からの精密探索範囲（±°）
     """
+    if metric == "ssim":
+        raise ValueError("ssim metric is not supported for library-based matching "
+                         "(not computed in _score). Use ncc, edge_ncc, nmi, combined, or combined_nmi.")
     t0 = time.time()
     if _preloaded is not None:
         # DRRLibraryCacheからプリロード済みデータを受け取った場合
