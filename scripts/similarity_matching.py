@@ -296,7 +296,7 @@ def match_angle(
     xray_norm = preprocess_image(xray_img, apply_rot270=False, auto_crop=True)
     all_scores: dict[float, dict[str, float]] = {}
 
-    _primary = "ncc" if metric == "combined" else metric
+    _primary = "ncc" if metric in ("combined", "combined_nmi") else metric
 
     def _run_angle(angle: float) -> tuple[float, np.ndarray]:
         return _generate_drr_at_angle(volume, landmarks, base_flexion, voxel_mm, angle)
@@ -352,6 +352,24 @@ def match_angle(
         best_encc = float(max(all_scores, key=lambda a: all_scores[a]["edge_ncc"]))
         best_angle = (best_ncc + best_encc) / 2.0
         print(f"    Combined: ncc={best_ncc:.1f}° + edge_ncc={best_encc:.1f}° → mean={best_angle:.1f}°")
+    elif metric == "combined_nmi":
+        best_ncc_int = max(all_scores, key=lambda a: all_scores[a]["ncc"])
+        best_nmi_int = max(all_scores, key=lambda a: all_scores[a]["nmi"])
+        # NMIピークがfine探索済み範囲外であれば追加探索
+        extra_min = max(ANGLE_MIN, best_nmi_int - fine_range)
+        extra_max = min(ANGLE_MAX, best_nmi_int + fine_range)
+        extra_angles = [a for a in np.arange(extra_min, extra_max + fine_step, fine_step).tolist()
+                        if a not in all_scores]
+        if extra_angles:
+            print(f"    nmi追加精密探索: {len(extra_angles)}角度 ({best_nmi_int:.0f}°周辺) ...")
+            for angle in extra_angles:
+                _, drr = _run_angle(angle)
+                drr_norm = preprocess_image(drr)
+                all_scores[angle] = compute_similarity(drr_norm, xray_norm)
+        best_ncc  = float(max(all_scores, key=lambda a: all_scores[a]["ncc"]))
+        best_nmi  = float(max(all_scores, key=lambda a: all_scores[a]["nmi"]))
+        best_angle = (best_ncc + best_nmi) / 2.0
+        print(f"    Combined_NMI: ncc={best_ncc:.1f}° + nmi={best_nmi:.1f}° → mean={best_angle:.1f}°")
     else:
         best_angle = _parabolic_peak(all_scores, metric)
 
