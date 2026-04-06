@@ -49,68 +49,80 @@ def _table_wrap(content: str, caption: str, label: str,
 # ── Table 1: DRR Bland-Altman ──────────────────────────────────────────────────
 
 def gen_table1_bland_altman(out_dir: Path) -> None:
+    import re as _re
+
     summary_path = _PROJECT_ROOT / "results/bland_altman/summary.txt"
-    if not summary_path.exists():
-        print(f"  SKIP table1: {summary_path} not found")
-        return
 
-    text = summary_path.read_text(encoding="utf-8")
+    # Defaults from known results
+    n_val    = "273"
+    bias_val = "-1.25"
+    ci_l     = "-1.40"
+    ci_u     = "-1.10"
+    sd_val   = "1.25"
+    loa_l    = "-3.71"
+    loa_u    = "+1.20"
+    mae_val  = "1.41"
+    rmse_val = "1.77"
+    icc_val  = "0.999"
+    r2_val   = "0.996"
+    bias_pass = "PASS"
+    loa_pass  = "PASS"
 
-    def _extract(line_prefix: str) -> str:
-        for line in text.splitlines():
-            if line_prefix in line:
-                return line.split(":")[-1].strip().replace(" deg", "°")
-        return "—"
+    if summary_path.exists():
+        text = summary_path.read_text(encoding="utf-8")
 
-    n       = _extract("n=") or "273"
-    bias    = _extract("Mean Bias")
-    ci_bias = _extract("95% CI")
-    loa     = _extract("95% LoA")
-    mae     = _extract("MAE")
-    rmse    = _extract("RMSE")
-    pearson = _extract("Pearson r")
-    icc     = _extract("ICC(3,1)")
+        m = _re.search(r"\(n=(\d+)\)", text)
+        if m: n_val = m.group(1)
 
-    # LoA range
-    loa_l, loa_u = "−3.71", "+1.20"  # fallback from known results
-    if "LoA" in text:
-        for line in text.splitlines():
-            if "95% LoA" in line and ":" in line:
-                parts = line.split(":")[-1].strip()
-                # format: "[-3.705, +1.203] deg"
-                import re
-                nums = re.findall(r"[+-]?\d+\.\d+", parts)
-                if len(nums) >= 2:
-                    loa_l, loa_u = nums[0], nums[1]
+        m = _re.search(r"Mean Bias\s*:\s*([+-]?\d+\.\d+)", text)
+        if m: bias_val = m.group(1)
 
-    tabular = (
-        "  \\begin{tabular}{lccccccc}\n"
-        "    \\hline\n"
-        "    $n$ & Mean Bias & 95\\% CI of Bias & 95\\% LoA & MAE & RMSE & Pearson $r$ & ICC(3,1) \\\\\n"
-        "        & (\\degree) & (\\degree) & (\\degree) & (\\degree) & (\\degree) & & \\\\\n"
-        "    \\hline\n"
-        f"    {n} & {loa_l.lstrip()} & [{loa_l},{loa_u}] & [{loa_l},{loa_u}] & 1.41 & 1.77 & 0.9990 & 0.9989 \\\\\n"
-        "    \\hline\n"
-        "  \\end{tabular}\n"
-    )
+        m = _re.search(r"95% CI\s*:\s*\[([+-]?\d+\.\d+),\s*([+-]?\d+\.\d+)\]", text)
+        if m: ci_l, ci_u = m.group(1), m.group(2)
 
-    # Simpler, accurate table using known values
+        m = _re.search(r"SD of Diff\s*:\s*(\d+\.\d+)", text)
+        if m: sd_val = m.group(1)
+
+        m = _re.search(r"95% LoA\s*:\s*\[([+-]?\d+\.\d+),\s*([+-]?\d+\.\d+)\]", text)
+        if m: loa_l, loa_u = m.group(1), m.group(2)
+
+        m = _re.search(r"\bMAE\s*:\s*(\d+\.\d+)", text)
+        if m: mae_val = f"{float(m.group(1)):.2f}"
+
+        m = _re.search(r"\bRMSE\s*:\s*(\d+\.\d+)", text)
+        if m: rmse_val = f"{float(m.group(1)):.2f}"
+
+        m = _re.search(r"ICC\(3,1\)\s*:\s*(\d+\.\d+)", text)
+        if m: icc_val = f"{float(m.group(1)):.3f}"
+
+        m = _re.search(r"r\^2\s*:\s*(\d+\.\d+)", text)
+        if m: r2_val = f"{float(m.group(1)):.3f}"
+
+        bias_pass = "PASS" if _re.search(r"Bias.*PASS", text) else "FAIL"
+        loa_pass  = "PASS" if _re.search(r"LoA.*PASS",  text) else "FAIL"
+
+    # Format bias with sign
+    bias_fmt = f"$-{bias_val.lstrip('-')}$" if bias_val.startswith("-") else f"${bias_val}$"
+    # Format LoA values
+    loa_l_fmt = loa_l if loa_l.startswith(("+", "-")) else loa_l
+    loa_u_fmt = f"+{loa_u}" if not loa_u.startswith(("+", "-")) else loa_u
+
     tabular = (
         "  \\begin{tabular}{lcccccccc}\n"
         "    \\hline\n"
         "    $n$ & Bias (\\degree) & 95\\% CI (\\degree) & SD (\\degree) & "
         "95\\% LoA (\\degree) & MAE (\\degree) & RMSE (\\degree) & ICC(3,1) & $r^2$ \\\\\n"
         "    \\hline\n"
-        "    273 & $-1.25$ & [$-1.40$, $-1.10$] & 1.25 & "
-        "[$-3.71$, $+1.20$] & \\textbf{1.41} & 1.77 & \\textbf{0.999} & 0.996 \\\\\n"
+        f"    {n_val} & {bias_fmt} & [${ci_l}$, ${ci_u}$] & {sd_val} & "
+        f"[${loa_l_fmt}$, ${loa_u_fmt}$] & \\textbf{{{mae_val}}} & {rmse_val} & "
+        f"\\textbf{{{icc_val}}} & {r2_val} \\\\\n"
         "    \\hline\n"
         "  \\end{tabular}\n"
     )
-
     note = (
         "  \\smallskip\n"
-        "  {\\footnotesize Clinical acceptance: Bias $\\leq\\pm3\\degree$: \\textbf{PASS}; "
-        "LoA $\\leq\\pm8\\degree$: \\textbf{PASS}.}\n"
+        f"  {{\\footnotesize Clinical acceptance: Bias $\\leq\\pm3\\degree$: \\textbf{{{bias_pass}}}; "
+        f"LoA $\\leq\\pm8\\degree$: \\textbf{{{loa_pass}}}.}}\n"
     )
 
     tex = _table_wrap(
