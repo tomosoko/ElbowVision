@@ -149,31 +149,57 @@ def gen_table1b_loo(out_dir: Path) -> None:
     summary_path = _PROJECT_ROOT / "results/self_test_loo/self_test_summary.txt"
     loo_mae, loo_rmse, loo_bias, loo_sd = "0.085", "0.159", "-0.002", "0.160"
     loo_n = "121"
-    interior_mae, interior_n = "0.069", "119"
+    interior_mae, interior_rmse, interior_bias, interior_n = "0.069", "0.094", "-0.002", "119"
     angle_min_s, angle_max_s = "60", "180"
 
+    def _parse_summary(path: Path, fields: dict) -> None:
+        if not path.exists():
+            return
+        text = path.read_text(encoding="utf-8")
+        for key, (pattern, target_dict, target_key) in fields.items():
+            m = re.search(pattern, text, re.M)
+            if m:
+                target_dict[target_key] = m.group(1)
+
+    # Parse all-angles LOO summary
+    _all = {}
+    _parse_summary(summary_path, {
+        "n":    (r"^n\s+=\s+(\d+)",             _all, "n"),
+        "mae":  (r"^MAE\s+=\s+([\d.]+)",         _all, "mae"),
+        "rmse": (r"^RMSE\s+=\s+([\d.]+)",        _all, "rmse"),
+        "bias": (r"^Mean Bias\s+=\s+([+-]?[\d.]+)", _all, "bias"),
+        "sd":   (r"^SD\s+=\s+([\d.]+)",          _all, "sd"),
+    })
+    if _all.get("n"):    loo_n    = _all["n"]
+    if _all.get("mae"):  loo_mae  = _all["mae"]
+    if _all.get("rmse"): loo_rmse = _all["rmse"]
+    if _all.get("bias"): loo_bias = _all["bias"]
+    if _all.get("sd"):   loo_sd   = _all["sd"]
+
+    # Parse interior-only (no-boundary) LOO summary
+    nb_path = _PROJECT_ROOT / "results/self_test_loo_no_boundary/self_test_summary.txt"
+    _nb = {}
+    _parse_summary(nb_path, {
+        "n":    (r"^n\s+=\s+(\d+)",             _nb, "n"),
+        "mae":  (r"^MAE\s+=\s+([\d.]+)",         _nb, "mae"),
+        "rmse": (r"^RMSE\s+=\s+([\d.]+)",        _nb, "rmse"),
+        "bias": (r"^Mean Bias\s+=\s+([+-]?[\d.]+)", _nb, "bias"),
+    })
+    if _nb.get("n"):    interior_n    = _nb["n"]
+    if _nb.get("mae"):  interior_mae  = _nb["mae"]
+    if _nb.get("rmse"): interior_rmse = _nb["rmse"]
+    if _nb.get("bias"): interior_bias = _nb["bias"]
+
+    # Parse boundary angle labels from all-angles summary
     if summary_path.exists():
         text = summary_path.read_text(encoding="utf-8")
-        m = re.search(r"^n\s+=\s+(\d+)", text, re.M)
-        if m: loo_n = m.group(1)
-        m = re.search(r"^MAE\s+=\s+([\d.]+)", text, re.M)
-        if m: loo_mae = m.group(1)
-        m = re.search(r"^RMSE\s+=\s+([\d.]+)", text, re.M)
-        if m: loo_rmse = m.group(1)
-        m = re.search(r"^Mean Bias\s+=\s+([+-]?[\d.]+)", text, re.M)
-        if m: loo_bias = m.group(1)
-        m = re.search(r"^SD\s+=\s+([\d.]+)", text, re.M)
-        if m: loo_sd = m.group(1)
-        m = re.search(r"MAE \(no boundary\)\s+=\s+([\d.]+).*\(n=(\d+)\)", text)
-        if m:
-            interior_mae = m.group(1)
-            interior_n   = m.group(2)
         m = re.search(r"boundary angles \((\d+).*?(\d+)°\)", text)
         if m:
             angle_min_s = m.group(1)
             angle_max_s = m.group(2)
 
     loo_bias_fmt = f"$-{loo_bias.lstrip('-')}$" if loo_bias.startswith("-") else f"${loo_bias}$"
+    int_bias_fmt = f"$-{interior_bias.lstrip('-')}$" if interior_bias.startswith("-") else f"${interior_bias}$"
 
     tabular = (
         "  \\begin{tabular}{lccccc}\n"
@@ -182,7 +208,7 @@ def gen_table1b_loo(out_dir: Path) -> None:
         "    \\hline\n"
         "    10  & Standard (DRR $\\equiv$ query) & 0.015 & 0.018 & $-0.015$ & 0.012 \\\\\n"
         f"    {loo_n} & LOO (all angles) & \\textbf{{{loo_mae}}} & \\textbf{{{loo_rmse}}} & {loo_bias_fmt} & {loo_sd} \\\\\n"
-        f"    {interior_n} & LOO (interior only, excl.\\ boundaries) & \\textbf{{{interior_mae}}} & \\textbf{{0.094}} & $-0.001$ & 0.094 \\\\\n"
+        f"    {interior_n} & LOO (interior only, excl.\\ boundaries) & \\textbf{{{interior_mae}}} & \\textbf{{{interior_rmse}}} & {int_bias_fmt} & {interior_rmse} \\\\\n"
         "    \\hline\n"
         "  \\end{tabular}\n"
     )
