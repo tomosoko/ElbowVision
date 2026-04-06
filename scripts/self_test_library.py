@@ -58,6 +58,8 @@ def main() -> None:
     parser.add_argument("--out_dir", default="results/self_test")
     parser.add_argument("--loo", action="store_true",
                         help="Leave-One-Out: テスト角度をライブラリから除いて評価（より厳密な検証）")
+    parser.add_argument("--exclude_boundary", action="store_true",
+                        help="境界角度（angle_min, angle_max）を除外（LOO境界補間不可エラーを排除）")
     args = parser.parse_args()
 
     from scripts.similarity_matching import load_drr_library, match_angle_from_library, \
@@ -87,7 +89,12 @@ def main() -> None:
             snapped.append(nearest)
         test_angles = snapped
 
+    if args.exclude_boundary:
+        test_angles = [a for a in test_angles if abs(a - angle_min) > 0.01 and abs(a - angle_max) > 0.01]
+
     mode_str = "LOO" if args.loo else "standard"
+    if args.exclude_boundary:
+        mode_str += " (no-boundary)"
     print(f"\nテスト角度: {len(test_angles)}角度  モード: {mode_str}")
 
     # ── 各テスト角度でマッチング ─────────────────────────────────────────────
@@ -176,16 +183,32 @@ def main() -> None:
     sd     = diffs.std(ddof=1) if len(diffs) > 1 else 0.0
     perfect = (errors == 0.0).sum()
 
+    # 境界除外の追加統計
+    boundary_note = ""
+    if args.loo and not args.exclude_boundary:
+        boundary_results = [r for r in results if abs(r["gt_angle"] - angle_min) < 0.01
+                            or abs(r["gt_angle"] - angle_max) < 0.01]
+        interior_results = [r for r in results if r not in boundary_results]
+        if interior_results:
+            int_errs = np.array([r["error"] for r in interior_results])
+            boundary_note = (
+                f"MAE (no boundary) = {int_errs.mean():.3f}° (n={len(interior_results)})\n"
+                f"  Note: boundary angles ({angle_min:.0f}°, {angle_max:.0f}°) have\n"
+                f"  systematic 1° error due to parabolic interpolation one-sided limit.\n"
+            )
+
     summary_text = (
         f"DRR Library Self-Test — {lib_path.name}\n"
         f"{'='*55}\n"
         f"n              = {len(results)}\n"
         f"Metric         = {args.metric}\n"
+        f"Mode           = {mode_str}\n"
         f"MAE            = {mae:.3f}°\n"
         f"RMSE           = {rmse:.3f}°\n"
         f"Mean Bias      = {bias:.3f}°\n"
         f"SD             = {sd:.3f}°\n"
-        f"Perfect (0°)   = {perfect}/{len(results)} ({100*perfect/len(results):.0f}%)\n"
+        + boundary_note
+        + f"Perfect (0°)   = {perfect}/{len(results)} ({100*perfect/len(results):.0f}%)\n"
         f"{'='*55}\n"
         f"Per-angle results:\n"
     )
