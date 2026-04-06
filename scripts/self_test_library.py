@@ -56,9 +56,12 @@ def main() -> None:
     parser.add_argument("--coarse_step", type=float, default=5.0)
     parser.add_argument("--fine_range", type=float, default=10.0)
     parser.add_argument("--out_dir", default="results/self_test")
+    parser.add_argument("--loo", action="store_true",
+                        help="Leave-One-Out: テスト角度をライブラリから除いて評価（より厳密な検証）")
     args = parser.parse_args()
 
-    from scripts.similarity_matching import load_drr_library, match_angle_from_library
+    from scripts.similarity_matching import load_drr_library, match_angle_from_library, \
+        _parabolic_peak, preprocess_image, extract_edges, ncc
 
     lib_path = _PROJECT_ROOT / args.library
     out_dir  = _PROJECT_ROOT / args.out_dir
@@ -84,7 +87,8 @@ def main() -> None:
             snapped.append(nearest)
         test_angles = snapped
 
-    print(f"\nテスト角度: {len(test_angles)}角度")
+    mode_str = "LOO" if args.loo else "standard"
+    print(f"\nテスト角度: {len(test_angles)}角度  モード: {mode_str}")
 
     # ── 各テスト角度でマッチング ─────────────────────────────────────────────
     results = []
@@ -92,21 +96,58 @@ def main() -> None:
         float(angles_arr[i]): drrs[i] for i in range(len(angles_arr))
     }
 
+    def _loo_match(gt_angle: float, test_drr_uint8: np.ndarray) -> tuple[float, float, float]:
+        """LOOモード: gt_angleをライブラリから除いてマッチング
+
+        ライブラリのDRRはCLAHE済みuint8なので /255.0 のみで正規化（再CLAHE不要）
+        """
+        # gt_angleを除いた all_scores を直接構築
+        xray_norm = test_drr_uint8.astype(np.float32) / 255.0  # 既にCLAHE済み
+        xray_edge = extract_edges(xray_norm)
+
+        all_scores: dict[float, dict[str, float]] = {}
+        for a, drr_u8 in angle_to_drr.items():
+            if abs(a - gt_angle) < 0.01:
+                continue  # テスト角度をスキップ（LOO）
+            drr_norm = drr_u8.astype(np.float32) / 255.0
+            all_scores[a] = {
+                "ncc":      ncc(drr_norm, xray_norm),
+                "edge_ncc": ncc(extract_edges(drr_norm), xray_edge),
+            }
+
+        if args.metric == "combined":
+            best_ncc_a  = _parabolic_peak(all_scores, "ncc")
+            best_encc_a = _parabolic_peak(all_scores, "edge_ncc")
+            best_a = (best_ncc_a + best_encc_a) / 2.0
+        else:
+            best_a = _parabolic_peak(all_scores, args.metric)
+
+        ncc_vals = np.array([all_scores[a]["ncc"] for a in all_scores])
+        nearest_a = min(all_scores.keys(), key=lambda a: abs(a - best_a))
+        p_ncc = float(all_scores[nearest_a]["ncc"])
+        sharp = float((p_ncc - ncc_vals.mean()) / (ncc_vals.std() + 1e-8))
+        return best_a, p_ncc, sharp
+
     for gt_angle in test_angles:
-        # テスト用DRRを擬似X線として渡す（ライブラリ自身からは外す必要はない — LOO不要）
-        # ライブラリ内DRRに完全一致するので理論的には0°誤差が期待されるが、
-        # LOO（leave-one-out）モードでは差が出る可能性がある
         test_drr = angle_to_drr[gt_angle]  # uint8
 
         t0 = time.time()
-        result = match_angle_from_library(
-            str(lib_path),
-            test_drr,
-            metric=args.metric,
-            coarse_step=args.coarse_step,
-            fine_range=args.fine_range,
-        )
-        elapsed = time.time() - t0
+        if args.loo:
+            pred_angle, p_ncc, sharp = _loo_match(gt_angle, test_drr)
+            elapsed = time.time() - t0
+            # MatchResult互換のダミー
+            class _R:
+                best_angle = pred_angle; peak_ncc = p_ncc; sharpness = sharp
+            result = _R()
+        else:
+            result = match_angle_from_library(
+                str(lib_path),
+                test_drr,
+                metric=args.metric,
+                coarse_step=args.coarse_step,
+                fine_range=args.fine_range,
+            )
+            elapsed = time.time() - t0
 
         error = abs(result.best_angle - gt_angle)
         results.append({

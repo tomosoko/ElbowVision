@@ -177,6 +177,42 @@ def compute_similarity(drr_norm: np.ndarray,
 
 # ── 類似度マッチング ──────────────────────────────────────────────────────────
 
+def _parabolic_peak(scores_dict: dict[float, dict[str, float]], metric_key: str) -> float:
+    """
+    NCCスコアカーブを放物線フィットしてサブ1°精度のピーク角度を推定。
+
+    ピーク前後の3点で numpy.polyfit(2次) を使い、等間隔でない場合も対応。
+    ピークが端点または隣接点が存在しない場合はピーク角度をそのまま返す。
+    """
+    sorted_angles = sorted(scores_dict)
+    peak_angle = max(sorted_angles, key=lambda a: scores_dict[a][metric_key])
+    idx = sorted_angles.index(peak_angle)
+
+    if idx == 0 or idx == len(sorted_angles) - 1:
+        return peak_angle
+
+    a_prev = sorted_angles[idx - 1]
+    a_next = sorted_angles[idx + 1]
+
+    x = np.array([a_prev, peak_angle, a_next])
+    y = np.array([scores_dict[a_prev][metric_key],
+                  scores_dict[peak_angle][metric_key],
+                  scores_dict[a_next][metric_key]])
+
+    # 2次多項式フィット
+    coeffs = np.polyfit(x, y, 2)  # [a, b, c]
+    a_coef = coeffs[0]
+    if abs(a_coef) < 1e-12 or a_coef > 0:  # 下に凸 or 水平 → フィット失敗
+        return peak_angle
+
+    # 頂点 x* = -b / (2a)
+    x_peak = -coeffs[1] / (2 * a_coef)
+
+    # ピーク前後の範囲外に出たらクリップ
+    x_peak = float(np.clip(x_peak, a_prev, a_next))
+    return x_peak
+
+
 class MatchResult(NamedTuple):
     best_angle:   float
     best_metric:  str
@@ -251,24 +287,26 @@ def match_angle(
         print()
 
     if metric == "combined":
-        best_ncc  = max(all_scores, key=lambda a: all_scores[a]["ncc"])
-        best_encc = max(all_scores, key=lambda a: all_scores[a]["edge_ncc"])
+        best_ncc_int  = max(all_scores, key=lambda a: all_scores[a]["ncc"])
+        best_encc_int = max(all_scores, key=lambda a: all_scores[a]["edge_ncc"])
         # edge_nccピークがfine探索済み範囲外であれば追加探索
-        extra_min = max(ANGLE_MIN, best_encc - fine_range)
-        extra_max = min(ANGLE_MAX, best_encc + fine_range)
+        extra_min = max(ANGLE_MIN, best_encc_int - fine_range)
+        extra_max = min(ANGLE_MAX, best_encc_int + fine_range)
         extra_angles = [a for a in np.arange(extra_min, extra_max + fine_step, fine_step).tolist()
                         if a not in all_scores]
         if extra_angles:
-            print(f"    edge_ncc追加精密探索: {len(extra_angles)}角度 ({best_encc:.0f}°周辺) ...")
+            print(f"    edge_ncc追加精密探索: {len(extra_angles)}角度 ({best_encc_int:.0f}°周辺) ...")
             for angle in extra_angles:
                 _, drr = _run_angle(angle)
                 drr_norm = preprocess_image(drr)
                 all_scores[angle] = compute_similarity(drr_norm, xray_norm)
-            best_encc = max(all_scores, key=lambda a: all_scores[a]["edge_ncc"])
+        # combined metricは整数ピーク（±5°バイアス相殺を維持）
+        best_ncc  = float(max(all_scores, key=lambda a: all_scores[a]["ncc"]))
+        best_encc = float(max(all_scores, key=lambda a: all_scores[a]["edge_ncc"]))
         best_angle = (best_ncc + best_encc) / 2.0
         print(f"    Combined: ncc={best_ncc:.1f}° + edge_ncc={best_encc:.1f}° → mean={best_angle:.1f}°")
     else:
-        best_angle = max(all_scores, key=lambda a: all_scores[a][metric])
+        best_angle = _parabolic_peak(all_scores, metric)
 
     # ベスト角度のDRRを再生成（可視化用）
     closest = min(all_scores.keys(), key=lambda a: abs(a - best_angle))
@@ -379,12 +417,14 @@ def match_angle_from_library(
     print(f"  計算完了: {time.time()-t1:.2f}s")
 
     if metric == "combined":
-        best_ncc  = max(all_scores, key=lambda a: all_scores[a]["ncc"])
-        best_encc = max(all_scores, key=lambda a: all_scores[a]["edge_ncc"])
-        best_angle = (best_ncc + best_encc) / 2.0
-        print(f"  Combined: ncc={best_ncc:.1f}° + edge_ncc={best_encc:.1f}° → mean={best_angle:.1f}°")
+        # combined metricは整数ピーク（±5°バイアス相殺を維持するため補間しない）
+        best_ncc_raw  = float(max(all_scores, key=lambda a: all_scores[a]["ncc"]))
+        best_encc_raw = float(max(all_scores, key=lambda a: all_scores[a]["edge_ncc"]))
+        best_angle = (best_ncc_raw + best_encc_raw) / 2.0
+        print(f"  Combined: ncc={best_ncc_raw:.1f}° + edge_ncc={best_encc_raw:.1f}° → mean={best_angle:.1f}°")
     else:
-        best_angle = float(max(all_scores, key=lambda a: all_scores[a][metric]))
+        # 単一metricは放物線補間でサブ1°精度
+        best_angle = _parabolic_peak(all_scores, metric)
 
     nearest  = min(angle_to_drr.keys(), key=lambda a: abs(a - best_angle))
     best_drr = angle_to_drr[nearest]
