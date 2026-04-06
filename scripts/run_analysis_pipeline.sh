@@ -158,6 +158,20 @@ if should_run "overview"; then
     ok "総合サマリー図完了 → results/figures/fig6_overview_summary.png"
 fi
 
+# ── STEP 6b: メトリクスバイアス図 ────────────────────────────────────────────
+if should_run "metric_bias"; then
+    hr "STEP 6b: メトリクスバイアス図（NCC/edge-NCC bias cancellation）"
+    MC_CSV="results/metric_comparison/metric_comparison.csv"
+    if [ ! -f "$BASE_DIR/$MC_CSV" ]; then
+        skip "メトリクス比較CSVが存在しない（先にSTEP 2を実行）"
+    else
+        $PYTHON scripts/generate_metric_bias_figure.py \
+            --csv "$MC_CSV" \
+            --out_dir results/figures/
+        ok "メトリクスバイアス図完了 → results/figures/fig8_metric_bias.png"
+    fi
+fi
+
 # ── STEP 7: LaTeX テーブル生成 ────────────────────────────────────────────────
 if should_run "latex"; then
     hr "STEP 7: LaTeX テーブル自動生成"
