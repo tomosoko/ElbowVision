@@ -465,9 +465,12 @@ def save_result_figure(
     ax2.axis("off")
 
     title = f"Similarity Matching — {patient_id}" if patient_id else "Similarity Matching"
+    conf_str = f"  peak_ncc={result.peak_ncc:.4f}  sharpness={result.sharpness:.2f}"
     if gt_angle is not None:
         err = abs(result.best_angle - gt_angle)
-        title += f"\nPred={result.best_angle:.1f}°  GT={gt_angle:.1f}°  Error={err:.1f}°"
+        title += f"\nPred={result.best_angle:.1f}°  GT={gt_angle:.1f}°  Error={err:.1f}°{conf_str}"
+    else:
+        title += f"\nPred={result.best_angle:.1f}°{conf_str}"
     fig.suptitle(title, fontsize=12, fontweight="bold")
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
