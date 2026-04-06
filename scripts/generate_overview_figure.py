@@ -129,13 +129,25 @@ def main() -> None:
     # ── Panel C: メトリクスバイアス比較 ────────────────────────────────────────
     ax_c = fig.add_subplot(gs[1, 0])
 
-    # Known results from patient008 standard X-rays (n=3)
-    metrics   = ["NCC", "edge-NCC", "Combined", "NMI", "Combined-NMI"]
-    biases    = [+5.0,  -5.3,       -0.2,        -5.1,   0.0]
-    maes_std  = [ 5.0,   5.3,        0.2,          5.1,   0.0]
-    colors_c  = ["#FF5722" if b > 0 else "#2196F3" if b < -0.5 else "#4CAF50" for b in biases]
+    metric_keys = ["ncc", "edge_ncc", "combined", "nmi", "combined_nmi"]
+    metric_labels_c = ["NCC", "edge-NCC", "Combined", "NMI", "Combined-NMI"]
 
-    bars = ax_c.bar(metrics, biases, color=colors_c, alpha=0.85, width=0.5)
+    mc_csv = _PROJECT_ROOT / "results/metric_comparison/metric_comparison.csv"
+    if mc_csv.exists():
+        mc_rows = []
+        with open(mc_csv) as f:
+            mc_rows = list(csv.DictReader(f))
+        # standard positioning only
+        std_rows_c = [r for r in mc_rows if "cr_008_2" not in r["filename"]]
+        n_std = len(std_rows_c)
+        biases = [np.mean([float(r[f"bias_{m}"]) for r in std_rows_c]) for m in metric_keys]
+    else:
+        # fallback hardcoded
+        n_std = 3
+        biases = [+5.0, -5.3, -0.2, -5.1, 0.0]
+
+    colors_c = ["#FF5722" if b > 0 else "#2196F3" if b < -0.5 else "#4CAF50" for b in biases]
+    bars = ax_c.bar(metric_labels_c, biases, color=colors_c, alpha=0.85, width=0.5)
     for bar, val in zip(bars, biases):
         yoff = 0.2 if val >= 0 else -0.5
         ax_c.text(bar.get_x() + bar.get_width()/2., val + yoff,
@@ -145,7 +157,7 @@ def main() -> None:
     ax_c.axhline(-3.0, color="orange", linewidth=1.0, linestyle="--", alpha=0.7,
                  label="±3° threshold")
     ax_c.set_ylabel("Mean Bias (Pred − GT) [°]")
-    ax_c.set_title("(C) Metric Bias — Standard Real X-rays\nn=3, GT=90°")
+    ax_c.set_title(f"(C) Metric Bias — Standard Real X-rays\nn={n_std}, GT=90°")
     ax_c.legend(fontsize=8)
     ax_c.grid(True, alpha=0.3, axis="y")
     ax_c.set_axisbelow(True)
