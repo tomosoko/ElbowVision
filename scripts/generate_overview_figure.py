@@ -87,9 +87,12 @@ def main() -> None:
         ax_a.text(0.5, 0.5, "predictions.csv not found", ha="center", va="center")
         ax_a.set_title("(A) Bland-Altman: DRR Val Set")
 
-    # ── Panel B: DRR LOO 精度マップ ────────────────────────────────────────────
+    # ── Panel B: DRR LOO 精度マップ（121角度）─────────────────────────────────
     ax_b = fig.add_subplot(gs[0, 1])
-    loo_csv = _PROJECT_ROOT / "results/self_test/self_test_results.csv"
+    # LOO results preferred (all 121 angles); fall back to standard 10-angle test
+    loo_csv = _PROJECT_ROOT / "results/self_test_loo/self_test_results.csv"
+    if not loo_csv.exists():
+        loo_csv = _PROJECT_ROOT / "results/self_test/self_test_results.csv"
     if loo_csv.exists():
         rows = []
         with open(loo_csv) as f:
@@ -113,10 +116,12 @@ def main() -> None:
                          label="±1° threshold")
             ax_b.set_xlabel("GT Angle [°]")
             ax_b.set_ylabel("Bias (Pred − GT) [°]")
-            ax_b.set_title(f"(B) DRR Library Self-Test (Standard)\nn={len(rows)}, MAE={mae:.3f}°")
+            mode = "LOO" if "loo" in str(loo_csv) else "Standard"
+            ax_b.set_title(f"(B) DRR Library Self-Test ({mode})\nn={len(rows)}, MAE={mae:.3f}°, RMSE={np.sqrt((err_arr**2).mean()):.3f}°")
             ax_b.legend(fontsize=8)
             ax_b.grid(True, alpha=0.3)
-            ax_b.set_ylim(-2, 2)
+            ylim = max(1.5, np.abs(diff_arr).max() * 1.2)
+            ax_b.set_ylim(-ylim, ylim)
     else:
         ax_b.text(0.5, 0.5, "self_test_results.csv not found", ha="center", va="center")
         ax_b.set_title("(B) DRR Library Self-Test")
