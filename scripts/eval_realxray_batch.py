@@ -74,6 +74,8 @@ def run_similarity(row: dict, out_dir: str) -> dict | None:
         "gt_flexion_deg": gt_angle,
         "pred_flexion_deg": result.best_angle,
         "error_deg":      abs(result.best_angle - gt_angle) if gt_angle else None,
+        "peak_ncc":       round(result.peak_ncc, 4),
+        "sharpness":      round(result.sharpness, 3),
         "elapsed_s":      round(elapsed, 1),
         "note":           row.get("note", ""),
     }
@@ -237,7 +239,7 @@ def main() -> None:
     # CSV出力
     pred_csv = Path(out_dir) / "predictions.csv"
     fieldnames = ["patient_id", "xray_path", "gt_flexion_deg", "pred_flexion_deg",
-                  "error_deg", "elapsed_s", "note"]
+                  "error_deg", "peak_ncc", "sharpness", "elapsed_s", "note"]
     with open(pred_csv, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()

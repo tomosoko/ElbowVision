@@ -182,6 +182,8 @@ class MatchResult(NamedTuple):
     best_metric:  str
     scores:       dict[float, dict[str, float]]  # {angle: {metric: score}}
     drr_at_best:  np.ndarray
+    peak_ncc:     float = 0.0   # ベスト角度のNCCスコア（1.0に近いほど高信頼）
+    sharpness:    float = 0.0   # ピーク鋭敏度 = (peak - mean) / std（大きいほど高信頼）
 
 
 def match_angle(
@@ -269,15 +271,21 @@ def match_angle(
         best_angle = max(all_scores, key=lambda a: all_scores[a][metric])
 
     # ベスト角度のDRRを再生成（可視化用）
-    # 整数に近い角度を使用（allscoresに存在する最近傍角度）
     closest = min(all_scores.keys(), key=lambda a: abs(a - best_angle))
     _, best_drr = _run_angle(closest)
+
+    # 信頼度指標計算
+    ncc_vals   = np.array([all_scores[a]["ncc"] for a in all_scores])
+    peak_ncc   = float(all_scores[closest]["ncc"])
+    sharpness  = float((peak_ncc - ncc_vals.mean()) / (ncc_vals.std() + 1e-8))
 
     return MatchResult(
         best_angle=best_angle,
         best_metric=metric,
         scores=all_scores,
         drr_at_best=best_drr,
+        peak_ncc=peak_ncc,
+        sharpness=sharpness,
     )
 
 
@@ -381,11 +389,18 @@ def match_angle_from_library(
     nearest  = min(angle_to_drr.keys(), key=lambda a: abs(a - best_angle))
     best_drr = angle_to_drr[nearest]
 
+    # 信頼度指標計算
+    ncc_vals  = np.array([all_scores[a]["ncc"] for a in all_scores])
+    peak_ncc  = float(all_scores[nearest]["ncc"])
+    sharpness = float((peak_ncc - ncc_vals.mean()) / (ncc_vals.std() + 1e-8))
+
     return MatchResult(
         best_angle=best_angle,
         best_metric=metric,
         scores=all_scores,
         drr_at_best=best_drr,
+        peak_ncc=peak_ncc,
+        sharpness=sharpness,
     )
 
 
@@ -514,6 +529,7 @@ def run_single(
         print(f"  GT角度   : {gt_angle:.1f}°")
         print(f"  誤差     : {err:.1f}°")
     print(f"  処理時間 : {elapsed:.1f}s")
+    print(f"  信頼度   : peak_ncc={result.peak_ncc:.4f}  sharpness={result.sharpness:.2f}")
 
     # スコアサマリーCSV保存
     scores_csv = Path(out_dir) / f"{patient_id}_scores.csv"
