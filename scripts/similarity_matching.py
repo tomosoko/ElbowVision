@@ -345,12 +345,68 @@ def load_drr_library(library_path: str) -> tuple[np.ndarray, np.ndarray, dict]:
     return angles, drrs, meta
 
 
+class DRRLibraryCache:
+    """
+    DRRライブラリをメモリに保持し、複数回のマッチングで再読み込みを防ぐ。
+
+    バッチ処理（複数患者・複数X線）での使用推奨:
+      cache = DRRLibraryCache("data/drr_library/patient008.npz")
+      for xray in xray_list:
+          result = cache.match(xray)
+
+    同一ライブラリに対する繰り返しコールで I/O が0になる（初回ロード後は即時）。
+    """
+
+    def __init__(self, library_path: str) -> None:
+        self.library_path = library_path
+        self._angles_arr: np.ndarray | None = None
+        self._drrs: np.ndarray | None = None
+        self._meta: dict | None = None
+        self._angle_to_drr: dict[float, np.ndarray] | None = None
+
+    def _ensure_loaded(self) -> None:
+        if self._angle_to_drr is not None:
+            return
+        t0 = time.time()
+        self._angles_arr, self._drrs, self._meta = load_drr_library(self.library_path)
+        self._angle_to_drr = {
+            float(self._angles_arr[i]): self._drrs[i]
+            for i in range(len(self._angles_arr))
+        }
+        print(f"DRRライブラリロード: {Path(self.library_path).name} "
+              f"({len(self._angle_to_drr)}角度, {time.time()-t0:.2f}s)")
+
+    @property
+    def meta(self) -> dict:
+        self._ensure_loaded()
+        return self._meta
+
+    def match(
+        self,
+        xray_img: np.ndarray,
+        metric: str = "combined",
+        coarse_step: float = ANGLE_STEP,
+        fine_range: float = 10.0,
+    ) -> "MatchResult":
+        """プリロード済みライブラリで類似度マッチングを実行"""
+        self._ensure_loaded()
+        return match_angle_from_library(
+            self.library_path,
+            xray_img,
+            metric=metric,
+            coarse_step=coarse_step,
+            fine_range=fine_range,
+            _preloaded=self._angle_to_drr,
+        )
+
+
 def match_angle_from_library(
     library_path: str,
     xray_img: np.ndarray,
     metric: str = "combined",
     coarse_step: float = ANGLE_STEP,
     fine_range: float = 10.0,
+    _preloaded: "dict[float, np.ndarray] | None" = None,
 ) -> MatchResult:
     """
     事前構築DRRライブラリを使った類似度マッチング（CT生成不要）。
@@ -367,18 +423,23 @@ def match_angle_from_library(
         coarse_step:  粗探索ステップ（°）
         fine_range:   NCC最良値からの精密探索範囲（±°）
     """
-    print(f"DRRライブラリ読み込み: {Path(library_path).name}")
     t0 = time.time()
-    angles_arr, drrs, meta = load_drr_library(library_path)
-    lib_step   = float(meta["angle_step"])
-    angle_min  = float(meta["angle_min"])
-    angle_max  = float(meta["angle_max"])
-    # angle → drr の高速辞書（1°解像度）
-    angle_to_drr: dict[float, np.ndarray] = {
-        float(angles_arr[i]): drrs[i] for i in range(len(angles_arr))
-    }
-    print(f"  {len(angles_arr)}角度 ({angle_min:.0f}°〜{angle_max:.0f}°, step={lib_step:.1f}°) "
-          f"— 読込{time.time()-t0:.2f}s")
+    if _preloaded is not None:
+        # DRRLibraryCacheからプリロード済みデータを受け取った場合
+        angle_to_drr = _preloaded
+        angles_arr_list = sorted(angle_to_drr.keys())
+        lib_step = round(angles_arr_list[1] - angles_arr_list[0], 4) if len(angles_arr_list) > 1 else 1.0
+        angle_min = angles_arr_list[0]
+        angle_max = angles_arr_list[-1]
+    else:
+        print(f"DRRライブラリ読み込み: {Path(library_path).name}")
+        angles_arr, drrs, meta = load_drr_library(library_path)
+        lib_step   = float(meta["angle_step"])
+        angle_min  = float(meta["angle_min"])
+        angle_max  = float(meta["angle_max"])
+        angle_to_drr = {float(angles_arr[i]): drrs[i] for i in range(len(angles_arr))}
+        print(f"  {len(angle_to_drr)}角度 ({angle_min:.0f}°〜{angle_max:.0f}°, step={lib_step:.1f}°) "
+              f"— 読込{time.time()-t0:.2f}s")
 
     xray_norm = preprocess_image(xray_img, apply_rot270=False, auto_crop=True)
     xray_edge = extract_edges(xray_norm)
