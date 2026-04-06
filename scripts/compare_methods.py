@@ -26,6 +26,7 @@ import numpy as np
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT / "elbow-train"))
+sys.path.insert(0, str(_PROJECT_ROOT))
 
 from elbow_synth import (
     load_ct_volume,
@@ -200,6 +201,10 @@ def main() -> None:
     parser.add_argument("--hu_min", type=float, default=50.0)
     parser.add_argument("--hu_max", type=float, default=800.0)
     parser.add_argument("--out_dir", default="results/method_comparison")
+    parser.add_argument("--library", default=None,
+                        help="DRRライブラリ .npz（指定時は類似度マッチングを高速化）")
+    parser.add_argument("--skip_convnext", action="store_true",
+                        help="ConvNeXt推論をスキップ（類似度マッチングのみ実行）")
     args = parser.parse_args()
 
     out_dir = _PROJECT_ROOT / args.out_dir
@@ -211,21 +216,30 @@ def main() -> None:
         for row in csv.DictReader(f):
             gt_map[row["filename"]] = float(row["gt_angle"])
 
-    # CT読み込み
-    print("CT読み込み中...")
-    volume, _, lat, voxel_mm = load_ct_volume(
-        str(_PROJECT_ROOT / args.ct_dir),
-        laterality=args.laterality,
-        series_num=args.series_num,
-        hu_min=args.hu_min,
-        hu_max=args.hu_max,
-        target_size=256,
-    )
-    landmarks = auto_detect_landmarks(volume, laterality=lat)
+    lib_path = str(_PROJECT_ROOT / args.library) if args.library else None
+
+    # CT読み込み（ライブラリ使用時もon-the-fly fallback用に読み込む）
+    if not lib_path or not Path(lib_path).exists():
+        print("CT読み込み中...")
+        volume, _, lat, voxel_mm = load_ct_volume(
+            str(_PROJECT_ROOT / args.ct_dir),
+            laterality=args.laterality,
+            series_num=args.series_num,
+            hu_min=args.hu_min,
+            hu_max=args.hu_max,
+            target_size=256,
+        )
+        landmarks = auto_detect_landmarks(volume, laterality=lat)
+    else:
+        print(f"DRRライブラリ使用: {Path(lib_path).name}")
+        volume = landmarks = lat = voxel_mm = None
 
     # ConvNeXtモデルロード
-    print("ConvNeXtモデルロード中...")
-    model, device = load_convnext(str(_PROJECT_ROOT / args.model_path))
+    if not args.skip_convnext:
+        print("ConvNeXtモデルロード中...")
+        model, device = load_convnext(str(_PROJECT_ROOT / args.model_path))
+    else:
+        model = device = None
 
     # 各X線で評価
     results = []
@@ -245,19 +259,27 @@ def main() -> None:
         print(f"\n[{fname}] GT={gt_angle}°")
 
         # ConvNeXt
-        t0 = time.time()
-        pred_convnext = predict_convnext(xray_img, model, device)
-        t_convnext = time.time() - t0
-        err_convnext = abs(pred_convnext - gt_angle)
-        print(f"  ConvNeXt: {pred_convnext:.1f}° (err={err_convnext:.1f}°, {t_convnext:.1f}s)")
+        if not args.skip_convnext:
+            t0 = time.time()
+            pred_convnext = predict_convnext(xray_img, model, device)
+            t_convnext = time.time() - t0
+            err_convnext = abs(pred_convnext - gt_angle)
+            print(f"  ConvNeXt: {pred_convnext:.1f}° (err={err_convnext:.1f}°, {t_convnext:.1f}s)")
+        else:
+            pred_convnext = err_convnext = t_convnext = None
 
         # 類似度マッチング
         t0 = time.time()
         xray_gray = cv2.cvtColor(xray_img, cv2.COLOR_BGR2GRAY)
-        pred_sim, _ = predict_similarity(xray_gray, volume, landmarks, lat, voxel_mm)
+        if lib_path and Path(lib_path).exists():
+            from scripts.similarity_matching import match_angle_from_library
+            match_result = match_angle_from_library(lib_path, xray_gray)
+            pred_sim = match_result.best_angle
+        else:
+            pred_sim, _ = predict_similarity(xray_gray, volume, landmarks, lat, voxel_mm)
         t_sim = time.time() - t0
         err_sim = abs(pred_sim - gt_angle)
-        print(f"  Similarity: {pred_sim:.1f}° (err={err_sim:.1f}°, {t_sim:.0f}s)")
+        print(f"  Similarity: {pred_sim:.1f}° (err={err_sim:.1f}°, {t_sim:.2f}s)")
 
         results.append({
             "filename":      fname,
@@ -266,8 +288,8 @@ def main() -> None:
             "err_convnext":  err_convnext,
             "pred_sim":      pred_sim,
             "err_sim":       err_sim,
-            "t_convnext":    round(t_convnext, 2),
-            "t_sim":         round(t_sim, 1),
+            "t_convnext":    round(t_convnext, 2) if t_convnext is not None else None,
+            "t_sim":         round(t_sim, 3),
         })
 
     if not results:
@@ -275,22 +297,26 @@ def main() -> None:
         return
 
     # サマリー
-    print(f"\n{'='*60}")
-    print(f"{'X線':20} | {'GT':>6} | {'ConvNeXt':>9} | {'Err':>6} | {'Sim':>6} | {'Err':>6}")
-    print("-" * 60)
+    print(f"\n{'='*70}")
+    print(f"{'X線':20} | {'GT':>6} | {'ConvNeXt':>9} | {'Err':>6} | {'Sim':>6} | {'Err':>6} | {'Time':>6}")
+    print("-" * 70)
     for r in results:
-        print(f"{r['filename']:20} | {r['gt_angle']:6.1f} | {r['pred_convnext']:9.1f} | "
-              f"{r['err_convnext']:6.1f} | {r['pred_sim']:6.1f} | {r['err_sim']:6.1f}")
+        cnx_str = f"{r['pred_convnext']:9.1f}" if r['pred_convnext'] is not None else "     N/A "
+        err_cnx_str = f"{r['err_convnext']:6.1f}" if r['err_convnext'] is not None else "   N/A"
+        print(f"{r['filename']:20} | {r['gt_angle']:6.1f} | {cnx_str} | "
+              f"{err_cnx_str} | {r['pred_sim']:6.1f} | {r['err_sim']:6.1f} | {r['t_sim']:6.3f}s")
 
-    mae_cnx = np.mean([r["err_convnext"] for r in results])
+    valid_cnx = [r["err_convnext"] for r in results if r["err_convnext"] is not None]
+    mae_cnx = np.mean(valid_cnx) if valid_cnx else None
     mae_sim = np.mean([r["err_sim"] for r in results])
-    print("-" * 60)
-    print(f"{'MAE':20} | {'':>6} | {'':>9} | {mae_cnx:6.2f} | {'':>6} | {mae_sim:6.2f}")
+    print("-" * 70)
+    mae_cnx_str = f"{mae_cnx:6.2f}" if mae_cnx is not None else "   N/A"
+    print(f"{'MAE':20} | {'':>6} | {'':>9} | {mae_cnx_str} | {'':>6} | {mae_sim:6.2f}")
 
     # JSON保存
     summary = {
         "n": len(results),
-        "mae_convnext": round(float(mae_cnx), 3),
+        "mae_convnext": round(float(mae_cnx), 3) if mae_cnx is not None else None,
         "mae_similarity": round(float(mae_sim), 3),
         "results": results,
     }
