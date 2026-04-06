@@ -259,37 +259,58 @@ def main() -> None:
         ax.grid(True, alpha=0.3)
         plt.colorbar(sc, ax=ax, label="Error [°]")
 
-        # 2. Error by angle
+        # 2. Error by angle (boundary highlighted)
         ax = axes[1]
-        ax.bar(gt_arr, err_arr, width=3.0, color="#2196F3", alpha=0.8)
+        is_boundary = np.array([
+            abs(a - angle_min) < 0.01 or abs(a - angle_max) < 0.01
+            for a in gt_arr
+        ])
+        bar_colors = ["#FF5722" if b else "#2196F3" for b in is_boundary]
+        ax.bar(gt_arr, err_arr, width=3.0, color=bar_colors, alpha=0.8)
         ax.axhline(3.0, color="orange", linestyle="--", linewidth=1.2,
                    label="3° threshold")
         ax.axhline(mae, color="red", linestyle=":", linewidth=1.2,
-                   label=f"MAE={mae:.2f}°")
+                   label=f"MAE={mae:.3f}°")
+        # Show interior MAE if different
+        interior_errs = err_arr[~is_boundary]
+        if len(interior_errs) > 0 and len(interior_errs) < len(err_arr):
+            interior_mae = interior_errs.mean()
+            ax.axhline(interior_mae, color="green", linestyle=":", linewidth=1.2,
+                       label=f"Interior MAE={interior_mae:.3f}°")
+        from matplotlib.patches import Patch
+        ax.legend(fontsize=8, handles=ax.get_legend_handles_labels()[0] + [
+            Patch(color="#FF5722", alpha=0.8, label="Boundary angle"),
+            Patch(color="#2196F3", alpha=0.8, label="Interior angle"),
+        ])
         ax.set_xlabel("GT Angle [°]")
         ax.set_ylabel("Error [°]")
-        ax.set_title("Error by Angle (DRR self-test)")
-        ax.legend(fontsize=9)
+        ax.set_title(f"Error by Angle — {mode_str}")
         ax.grid(True, alpha=0.3)
 
-        # 3. Bias by angle
+        # 3. Bias by angle (boundary highlighted)
         ax = axes[2]
-        colors = ["#f44336" if d < 0 else "#4CAF50" for d in diff_arr]
+        colors = ["#FF5722" if b else ("#f44336" if d < 0 else "#4CAF50")
+                  for b, d in zip(is_boundary, diff_arr)]
         ax.bar(gt_arr, diff_arr, width=3.0, color=colors, alpha=0.8)
         ax.axhline(0, color="black", linewidth=1.0)
-        ax.axhline(3.0,  color="orange", linestyle="--", linewidth=1.0)
-        ax.axhline(-3.0, color="orange", linestyle="--", linewidth=1.0,
-                   label="±3° threshold")
+        ax.axhline(1.0,  color="orange", linestyle="--", linewidth=1.0, alpha=0.7)
+        ax.axhline(-1.0, color="orange", linestyle="--", linewidth=1.0, alpha=0.7,
+                   label="±1° threshold")
         ax.set_xlabel("GT Angle [°]")
         ax.set_ylabel("Bias (Pred - GT) [°]")
         ax.set_title("Systematic Bias by Angle")
-        ax.legend(fontsize=9)
+        ax.legend(fontsize=8)
         ax.grid(True, alpha=0.3)
+        ylim_b = max(1.5, np.abs(diff_arr).max() * 1.2)
+        ax.set_ylim(-ylim_b, ylim_b)
 
+        # Summary stats for title
+        title_extra = f"interior MAE={interior_errs.mean():.3f}° (n={len(interior_errs)})" if len(interior_errs) < len(err_arr) else ""
         fig.suptitle(
             f"DRR Library Self-Test — {lib_path.name}\n"
-            f"n={len(results)}, metric={args.metric}, MAE={mae:.2f}°",
-            fontsize=12,
+            f"n={len(results)}, metric={args.metric}, MAE={mae:.3f}°"
+            + (f"  {title_extra}" if title_extra else ""),
+            fontsize=11,
         )
         fig.tight_layout()
         fig.savefig(str(out_dir / "self_test_plot.png"), bbox_inches="tight")
