@@ -113,10 +113,13 @@ def main() -> None:
             "gt_angle":   gt_angle,
             "pred_angle": result.best_angle,
             "error":      error,
+            "peak_ncc":   round(result.peak_ncc, 4),
+            "sharpness":  round(result.sharpness, 3),
             "elapsed_s":  round(elapsed, 2),
         })
         print(f"  GT={gt_angle:5.1f}° → Pred={result.best_angle:5.1f}° "
-              f"Err={error:4.1f}° ({elapsed:.2f}s)")
+              f"Err={error:4.1f}°  ncc={result.peak_ncc:.4f}  sharp={result.sharpness:.2f} "
+              f"({elapsed:.2f}s)")
 
     # ── 統計 ─────────────────────────────────────────────────────────────────
     errors = np.array([r["error"] for r in results])
@@ -150,7 +153,8 @@ def main() -> None:
     # CSV保存
     csv_path = out_dir / "self_test_results.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["gt_angle","pred_angle","error","elapsed_s"])
+        writer = csv.DictWriter(f, fieldnames=["gt_angle","pred_angle","error",
+                                               "peak_ncc","sharpness","elapsed_s"])
         writer.writeheader()
         writer.writerows(results)
 
