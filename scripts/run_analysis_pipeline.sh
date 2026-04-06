@@ -172,6 +172,19 @@ if should_run "metric_bias"; then
     fi
 fi
 
+# ── STEP 6d: ドメインギャップ図 ──────────────────────────────────────────────
+if should_run "domain_gap"; then
+    hr "STEP 6d: ドメインギャップ可視化（fig10: DRR vs 実X線 4パネル）"
+    if [ ! -f "$BASE_DIR/$LIBRARY" ]; then
+        skip "DRRライブラリが存在しない"
+    else
+        $PYTHON scripts/generate_domain_gap_figure.py \
+            --library "$LIBRARY" \
+            --out_dir results/figures/
+        ok "ドメインギャップ図完了 → results/figures/fig10_domain_gap.png"
+    fi
+fi
+
 # ── STEP 6c: LOO精度マップ図 ──────────────────────────────────────────────────
 if should_run "loo_fig"; then
     hr "STEP 6c: LOO精度マップ図（fig9: GT vs Pred / Error / peak_ncc）"

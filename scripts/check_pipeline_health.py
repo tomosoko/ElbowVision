@@ -94,6 +94,7 @@ def main() -> None:
         "fig7_ncc_curves.png",
         "fig8_metric_bias.png",
         "fig9_loo_accuracy.png",
+        "fig10_domain_gap.png",
     ]:
         _check(fig_name, R / "results/figures" / fig_name, required=False)
     print()
@@ -135,6 +136,7 @@ def main() -> None:
             "scripts/generate_overview_figure.py",
             "scripts/generate_metric_bias_figure.py",
             "scripts/generate_loo_figure.py",
+            "scripts/generate_domain_gap_figure.py",
             "scripts/generate_paper_latex.py",
             "scripts/add_patient.py",
             "scripts/eval_realxray_batch.py",
