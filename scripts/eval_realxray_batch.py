@@ -38,7 +38,8 @@ sys.path.insert(0, str(_PROJECT_ROOT / "elbow-train"))
 sys.path.insert(0, str(_PROJECT_ROOT))
 
 
-def run_similarity(row: dict, out_dir: str, lib_cache=None) -> dict | None:
+def run_similarity(row: dict, out_dir: str, lib_cache=None,
+                   metric: str = "combined") -> dict | None:
     """類似度マッチングで1画像を評価"""
     from scripts.similarity_matching import run_single
 
@@ -59,17 +60,9 @@ def run_similarity(row: dict, out_dir: str, lib_cache=None) -> dict | None:
         xray_img = _cv2.imread(xray_path, _cv2.IMREAD_GRAYSCALE)
         if xray_img is None:
             raise FileNotFoundError(f"X線画像が読み込めません: {xray_path}")
-        match_result = lib_cache.match(xray_img)
-        # 可視化は run_single と同様に保存
+        result = lib_cache.match(xray_img, metric=metric)
         _out = os.path.join(out_dir, pid)
         os.makedirs(_out, exist_ok=True)
-
-        class _MatchResultCompat:
-            best_angle  = match_result.best_angle
-            peak_ncc    = match_result.peak_ncc
-            sharpness   = match_result.sharpness
-
-        result = _MatchResultCompat()
     else:
         result = run_single(
             ct_dir       = ct_dir,
@@ -80,7 +73,7 @@ def run_similarity(row: dict, out_dir: str, lib_cache=None) -> dict | None:
             hu_min       = hu_min,
             hu_max       = hu_max,
             gt_angle     = gt_angle,
-            metric       = "combined",
+            metric       = metric,
             patient_id   = pid,
             library_path = lib_path,
         )
@@ -222,6 +215,9 @@ def main() -> None:
     parser.add_argument("--method", default="similarity",
                         choices=["similarity"],
                         help="評価手法（現在: similarity のみ）")
+    parser.add_argument("--metric", default="combined",
+                        choices=["ncc", "edge_ncc", "combined", "nmi", "combined_nmi"],
+                        help="類似度メトリクス（推奨: combined_nmi）")
     parser.add_argument("--skip_ba", action="store_true",
                         help="Bland-Altman解析をスキップ")
     args = parser.parse_args()
@@ -252,7 +248,8 @@ def main() -> None:
             r = run_similarity(row, out_dir,
                                lib_cache=_get_cache(
                                    str(_PROJECT_ROOT / row["library_path"])
-                               ) if row.get("library_path") else None)
+                               ) if row.get("library_path") else None,
+                               metric=args.metric)
             if r:
                 results.append(r)
                 if r["error_deg"] is not None:
