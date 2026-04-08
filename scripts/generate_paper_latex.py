@@ -146,7 +146,7 @@ def gen_table1b_loo(out_dir: Path) -> None:
     import re
 
     # Try to read actual values from LOO summary (integer argmax, production-consistent)
-    summary_path = _PROJECT_ROOT / "results/self_test/self_test_summary.txt"
+    summary_path = _PROJECT_ROOT / "results/self_test_loo/self_test_summary.txt"
     loo_mae, loo_rmse, loo_bias, loo_sd = "0.545", "0.739", "-0.017", "0.741"
     loo_n = "121"
     interior_mae, interior_rmse, interior_bias, interior_n = "0.538", "0.733", "-0.017", "119"

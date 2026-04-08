@@ -82,6 +82,12 @@ def main() -> None:
 
     # ── クエリ画像の準備 ────────────────────────────────────────────────────
     gt_angle = args.gt_angle
+    # gt_angleがライブラリにない場合は最近傍にスナップ
+    gt_angle_snap = min(angle_to_drr.keys(), key=lambda a: abs(a - gt_angle))
+    if abs(gt_angle_snap - gt_angle) > 0.01:
+        print(f"  [警告] GT角度 {gt_angle}° はライブラリに存在しません → {gt_angle_snap}° にスナップ")
+    gt_angle = gt_angle_snap
+
     # 1) DRR from library (exact match, standard test)
     drr_query_std = angle_to_drr[gt_angle]
 
