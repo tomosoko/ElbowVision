@@ -256,13 +256,15 @@ Phase 3: 臨床応用
 
 ---
 
-<!-- _class: lead -->
+# DRR生成デモ: CTから肘X線が作られる様子
 
-# DRR生成デモ
+<div style="text-align: center;">
 
-## CTから肘X線が作られる様子
+![w:400](drr_animation.gif)
 
-<!-- ここでDRR GIFアニメーションを見せる -->
-<!-- GIF: slides/drr_animation.gif -->
+</div>
+
+前腕の回旋角度を -30° ~ +30° で変化させたDRR
+*1つのCTから、無数のポジショニングバリエーションを生成できる*
 
 ---
