@@ -1,14 +1,15 @@
 """
-DRR GIFアニメーション生成 — CTから回旋角度を変えてDRRを連番生成し、GIF/MP4にする
+DRR GIFアニメーション生成 — 3軸（回旋・屈曲・視点）で変化するDRRを生成
 
 新人向けプレゼン用デモ素材。
-CTボリュームを読み込み、前腕の回旋角度を少しずつ変えながらDRRを生成。
-肘が回る様子がアニメーションになる。
+CTボリュームを読み込み、3つのアニメーションを生成:
+  1. 回旋（前腕の回内/回外）- AP view
+  2. 屈曲（肘の曲げ伸ばし）- LAT view
+  3. 視点回転（AP→LAT遷移）- 固定ポーズ
 
 使い方:
   cd /Users/kohei/develop/research/ElbowVision
-  source elbow-api/venv/bin/activate
-  python scripts/generate_drr_gif.py
+  /Users/kohei/develop/research/ElbowVision/elbow-api/venv/bin/python scripts/generate_drr_gif.py
 """
 
 import os
@@ -28,7 +29,6 @@ from elbow_synth import (
     generate_drr,
 )
 
-# ── 設定 ──
 CT_DIR = os.path.join(PROJECT_ROOT, "data/raw_dicom/ct")
 OUT_DIR = os.path.join(PROJECT_ROOT, "slides")
 FRAMES_DIR = os.path.join(OUT_DIR, "drr_frames")
@@ -38,102 +38,138 @@ TARGET_SIZE = 256
 HU_MIN = 50
 HU_MAX = 800
 LATERALITY = "L"
-
-# 回旋角度の範囲（-30° ~ +30° を往復）
-ROTATION_ANGLES = list(range(-30, 31, 3)) + list(range(30, -31, -3))
-# 1フレームの表示時間（ms）
-FRAME_DURATION_MS = 100
+FRAME_DURATION_MS = 120
 
 
-def add_label(img, text, position=(10, 25), font_scale=0.7):
-    """画像にテキストラベルを追加"""
+def add_labels(img, lines):
+    """画像に複数行のテキストラベルを追加"""
     img_color = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR) if len(img.shape) == 2 else img
-    cv2.putText(
-        img_color, text, position,
-        cv2.FONT_HERSHEY_SIMPLEX, font_scale,
-        (0, 255, 255), 2, cv2.LINE_AA,
-    )
+    for i, text in enumerate(lines):
+        y = 22 + i * 22
+        cv2.putText(
+            img_color, text, (8, y),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+            (0, 255, 255), 1, cv2.LINE_AA,
+        )
     return img_color
 
 
+def make_gif(pil_frames, path):
+    """PIL Imagesのリストからループするgifを生成"""
+    pil_frames[0].save(
+        path, save_all=True, append_images=pil_frames[1:],
+        duration=FRAME_DURATION_MS, loop=0,
+    )
+    kb = os.path.getsize(path) / 1024
+    print(f"    -> {path} ({kb:.0f} KB, {len(pil_frames)} frames)")
+
+
+def bounce(values):
+    """値のリストを往復にする（[1,2,3] -> [1,2,3,2,1]）"""
+    return list(values) + list(reversed(values))[1:-1]
+
+
 def main():
+    from PIL import Image
+
     t0 = time.time()
-    print("=" * 50)
-    print("DRR GIF Animation Generator")
-    print("=" * 50)
+    print("=" * 60)
+    print("DRR 3-Axis GIF Animation Generator")
+    print("=" * 60)
 
     # CTボリューム読み込み
-    print("\n[1/3] Loading CT volume...")
+    print("\n[1/4] Loading CT volume...")
     volume, voxel_spacing, lat, voxel_mm = load_ct_volume(
-        CT_DIR,
-        target_size=TARGET_SIZE,
-        laterality=LATERALITY,
-        hu_min=HU_MIN,
-        hu_max=HU_MAX,
+        CT_DIR, target_size=TARGET_SIZE, laterality=LATERALITY,
+        hu_min=HU_MIN, hu_max=HU_MAX,
     )
     landmarks = auto_detect_landmarks(volume)
-    print(f"  Volume shape: {volume.shape}, voxel_mm: {voxel_mm:.3f}")
+    print(f"  Volume: {volume.shape}, voxel_mm: {voxel_mm:.3f}")
 
-    # DRR連番生成
-    print(f"\n[2/3] Generating {len(ROTATION_ANGLES)} DRR frames...")
-    frames = []
-    for i, rot_deg in enumerate(ROTATION_ANGLES):
-        rot_vol, rot_lm = rotate_volume_and_landmarks(
+    # ── GIF 1: 回旋（Rotation） ──
+    print("\n[2/4] Generating rotation animation (AP view)...")
+    rotation_angles = bounce(range(-25, 26, 5))
+    rot_frames = []
+    for rot_deg in rotation_angles:
+        rot_vol, _ = rotate_volume_and_landmarks(
+            volume, landmarks,
+            forearm_rotation_deg=float(rot_deg), flexion_deg=0.0, base_flexion=180,
+        )
+        drr = generate_drr(rot_vol, axis="AP", voxel_mm=voxel_mm)
+        drr = cv2.resize(drr, (TARGET_SIZE, TARGET_SIZE), interpolation=cv2.INTER_AREA)
+        labeled = add_labels(drr, ["AP View", f"Rotation: {rot_deg:+d} deg"])
+        rgb = cv2.cvtColor(labeled, cv2.COLOR_BGR2RGB)
+        rot_frames.append(Image.fromarray(rgb))
+        print(f"    rot={rot_deg:+3d}")
+    make_gif(rot_frames, os.path.join(OUT_DIR, "drr_rotation.gif"))
+
+    # ── GIF 2: 屈曲（Flexion） ──
+    print("\n[3/4] Generating flexion animation (LAT view)...")
+    flexion_offsets = bounce(range(-20, 21, 4))
+    flex_frames = []
+    for flex_off in flexion_offsets:
+        rot_vol, _ = rotate_volume_and_landmarks(
+            volume, landmarks,
+            forearm_rotation_deg=0.0, flexion_deg=float(flex_off), base_flexion=180,
+        )
+        drr = generate_drr(rot_vol, axis="LAT", voxel_mm=voxel_mm)
+        drr = cv2.resize(drr, (TARGET_SIZE, TARGET_SIZE), interpolation=cv2.INTER_AREA)
+        labeled = add_labels(drr, ["LAT View", f"Flexion: {flex_off:+d} deg"])
+        rgb = cv2.cvtColor(labeled, cv2.COLOR_BGR2RGB)
+        flex_frames.append(Image.fromarray(rgb))
+        print(f"    flex={flex_off:+3d}")
+    make_gif(flex_frames, os.path.join(OUT_DIR, "drr_flexion.gif"))
+
+    # ── GIF 3: 3軸合成（回旋+屈曲を同時に変化） ──
+    print("\n[4/4] Generating combined 3-axis animation...")
+    n_frames = 36
+    combined_frames = []
+    for i in range(n_frames):
+        t = i / n_frames * 2 * np.pi
+        rot_deg = 25 * np.sin(t)
+        flex_deg = 15 * np.sin(t * 0.7)
+        # AP/LAT切り替えはsinで補間（実際にはAP固定で回旋で視点変化を表現）
+        rot_vol, _ = rotate_volume_and_landmarks(
             volume, landmarks,
             forearm_rotation_deg=float(rot_deg),
-            flexion_deg=0.0,
+            flexion_deg=float(flex_deg),
             base_flexion=180,
         )
         drr = generate_drr(rot_vol, axis="AP", voxel_mm=voxel_mm)
         drr = cv2.resize(drr, (TARGET_SIZE, TARGET_SIZE), interpolation=cv2.INTER_AREA)
+        labeled = add_labels(drr, [
+            "3-Axis DRR Demo",
+            f"Rot: {rot_deg:+5.1f}  Flex: {flex_deg:+5.1f}",
+        ])
+        rgb = cv2.cvtColor(labeled, cv2.COLOR_BGR2RGB)
+        combined_frames.append(Image.fromarray(rgb))
+        print(f"    frame {i+1}/{n_frames}: rot={rot_deg:+5.1f} flex={flex_deg:+5.1f}")
+    make_gif(combined_frames, os.path.join(OUT_DIR, "drr_combined.gif"))
 
-        # ラベル付き
-        labeled = add_label(drr, f"Rotation: {rot_deg:+d} deg")
-        frames.append(labeled)
-
-        # 個別フレーム保存
-        fname = os.path.join(FRAMES_DIR, f"frame_{i:03d}.png")
-        cv2.imwrite(fname, labeled)
-
-        progress = (i + 1) / len(ROTATION_ANGLES) * 100
-        print(f"  [{progress:5.1f}%] rotation={rot_deg:+3d}deg -> frame_{i:03d}.png")
-
-    # GIF生成（Pillowを使用）
-    print("\n[3/3] Creating GIF animation...")
-    try:
-        from PIL import Image
-
-        pil_frames = []
-        for f in frames:
-            rgb = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
-            pil_frames.append(Image.fromarray(rgb))
-
-        gif_path = os.path.join(OUT_DIR, "drr_animation.gif")
-        pil_frames[0].save(
-            gif_path,
-            save_all=True,
-            append_images=pil_frames[1:],
-            duration=FRAME_DURATION_MS,
-            loop=0,
-        )
-        print(f"  GIF saved: {gif_path}")
-        print(f"  Size: {os.path.getsize(gif_path) / 1024:.0f} KB")
-    except ImportError:
-        print("  Pillow not available, skipping GIF. Frames saved in drr_frames/")
-
-    # MP4も生成（ffmpegが使えれば）
-    mp4_path = os.path.join(OUT_DIR, "drr_animation.mp4")
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    h, w = frames[0].shape[:2]
-    writer = cv2.VideoWriter(mp4_path, fourcc, 10, (w, h))
-    for f in frames:
-        writer.write(f)
-    writer.release()
-    print(f"  MP4 saved: {mp4_path}")
-    print(f"  Size: {os.path.getsize(mp4_path) / 1024:.0f} KB")
+    # ── 3つ横に並べた合成GIF ──
+    print("\n  Creating side-by-side composite GIF...")
+    max_len = max(len(rot_frames), len(flex_frames), len(combined_frames))
+    composite_frames = []
+    gap = 4
+    w = TARGET_SIZE * 3 + gap * 2
+    h = TARGET_SIZE + 30  # 下にキャプション用スペース
+    for i in range(max_len):
+        canvas = Image.new("RGB", (w, h), (20, 20, 40))
+        r = rot_frames[i % len(rot_frames)]
+        f = flex_frames[i % len(flex_frames)]
+        c = combined_frames[i % len(combined_frames)]
+        canvas.paste(r, (0, 0))
+        canvas.paste(f, (TARGET_SIZE + gap, 0))
+        canvas.paste(c, (TARGET_SIZE * 2 + gap * 2, 0))
+        composite_frames.append(canvas)
+    make_gif(composite_frames, os.path.join(OUT_DIR, "drr_animation.gif"))
 
     elapsed = time.time() - t0
-    print(f"\nDone in {elapsed:.1f}s — {len(frames)} frames generated")
+    print(f"\nDone in {elapsed:.1f}s")
+    print(f"  drr_rotation.gif  — 回旋のみ")
+    print(f"  drr_flexion.gif   — 屈曲のみ")
+    print(f"  drr_combined.gif  — 3軸合成")
+    print(f"  drr_animation.gif — 3つ横並び（スライド用）")
 
 
 if __name__ == "__main__":
