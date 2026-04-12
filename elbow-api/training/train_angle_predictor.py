@@ -195,6 +195,8 @@ def train(args):
         [
             transforms.Resize((224, 224)),
             transforms.RandomHorizontalFlip(),
+            transforms.RandomRotation(10),        # ±10° 回転 (v4改善)
+            transforms.RandomAffine(degrees=0, translate=(0.05, 0.05), scale=(0.9, 1.1)),  # v4改善
             transforms.ColorJitter(brightness=0.2, contrast=0.2),
             transforms.ToTensor(),
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
@@ -240,11 +242,12 @@ def train(args):
     train_ds = ElbowDataset("/tmp/_train_split.csv", args.imgs, transform)
     val_ds = ElbowDataset("/tmp/_val_split.csv", args.imgs, val_transform)
 
+    num_workers = getattr(args, 'num_workers', 4)
     train_loader = DataLoader(
-        train_ds, batch_size=args.batch, shuffle=True, num_workers=0
+        train_ds, batch_size=args.batch, shuffle=True, num_workers=num_workers
     )
     val_loader = DataLoader(
-        val_ds, batch_size=args.batch, shuffle=False, num_workers=0
+        val_ds, batch_size=args.batch, shuffle=False, num_workers=num_workers
     )
 
     model = ElbowConvNeXt(pretrained=True).to(device)
@@ -298,13 +301,15 @@ def train(args):
             if use_amp and scaler is not None:
                 with torch.amp.autocast("cuda", dtype=amp_dtype):
                     preds = model(images)
-                    loss = (torch.abs(preds - targets) * masks).mean()
+                    huber = nn.HuberLoss(delta=10.0, reduction='none')
+                    loss = (huber(preds, targets) * masks).mean()
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
             else:
                 preds = model(images)
-                loss = (torch.abs(preds - targets) * masks).mean()
+                huber = nn.HuberLoss(delta=10.0, reduction='none')
+                loss = (huber(preds, targets) * masks).mean()
                 loss.backward()
                 optimizer.step()
 
@@ -322,7 +327,8 @@ def train(args):
                     masks.to(device),
                 )
                 preds = model(images)
-                val_loss += (torch.abs(preds - targets) * masks).mean().item()
+                huber_val = nn.HuberLoss(delta=10.0, reduction='none')
+                val_loss += (huber_val(preds, targets) * masks).mean().item()
         val_loss /= max(len(val_loader), 1)
 
         current_lr = scheduler.get_last_lr()[0]

@@ -20,19 +20,19 @@ import time
 # このスクリプトは ElbowVision/ から実行される想定
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-CSV_PATH = os.path.join(BASE_DIR, "data", "yolo_dataset_v3", "convnext_labels.csv")
-IMGS_DIR = os.path.join(BASE_DIR, "data", "yolo_dataset_v3", "images")
+CSV_PATH = os.path.join(BASE_DIR, "data", "yolo_dataset_v4", "convnext_labels.csv")
+IMGS_DIR = os.path.join(BASE_DIR, "data", "yolo_dataset_v4", "images")
 SAVE_PATH = os.path.join(BASE_DIR, "elbow-api", "elbow_convnext_best.pth")
 
 # train_angle_predictor.py を import するためにパスを追加
 TRAINING_DIR = os.path.join(BASE_DIR, "elbow-api", "training")
 sys.path.insert(0, TRAINING_DIR)
 
-# --- 訓練パラメータ（M4 Pro 64GB最適化）-------------------------------------
-EPOCHS = 100
-BATCH_SIZE = 64       # 64GB RAM -> batch=64 でM4 Pro最適化
-LR = 1e-4
-PATIENCE = 20
+# --- 訓練パラメータ（M4 Pro 64GB最適化・v4改善版）----------------------------
+EPOCHS = 150          # v4: 大データセット対応
+BATCH_SIZE = 64       # 64GB RAM活用
+LR = 5e-5             # v4: より細かい収束
+PATIENCE = 30         # v4: patience拡大
 WARMUP = 5
 
 
@@ -78,7 +78,8 @@ def main():
         lr=LR,
         patience=PATIENCE,
         warmup=WARMUP,
-        amp=True,  # MPS では内部で自動無効化される
+        num_workers=4,    # v4改善: DataLoader並列化
+        amp=True,         # MPS では内部で自動無効化される
     )
 
     start = time.time()
