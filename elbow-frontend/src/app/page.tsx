@@ -104,6 +104,29 @@ const LANDMARK_LABELS: Record<string, string> = {
   lateral_epicondyle: "外側上顆", medial_epicondyle: "内側上顆",
   forearm_shaft: "前腕骨", radial_head: "橈骨頭", olecranon: "肘頭",
 };
+// --- 左腕用テキスト反転 ---
+function flipPSText(text: string): string {
+  return text
+    .replace(/回外 \(Supination\)/g, "回内 (Pronation)")
+    .replace(/回内 \(Pronation\)/g, "回外_TMP")
+    .replace(/回外_TMP/g, "回外 (Supination)")
+    .replace(/回外/g, "回内_TMP")
+    .replace(/回内(?!_TMP)/g, "回外")
+    .replace(/回内_TMP/g, "回内");
+}
+function flipAdvice(text: string): string {
+  const t = text
+    .replace(/回外してください/g, "回内_TMPしてください")
+    .replace(/回内しています/g, "回外_TMPしています")
+    .replace(/回外位/g, "回内_TMP位")
+    .replace(/回内_TMP/g, "回内")
+    .replace(/回外_TMP/g, "回外")
+    .replace(/手のひらが上を向/g, "手のひらが下を向")
+    .replace(/手のひらをさらに上に向ける/g, "手のひらをさらに下に向ける")
+    .replace(/手のひらが完全に上を向く/g, "手のひらが完全に下を向く");
+  return t;
+}
+
 const GRADCAM_TARGETS = [
   { key: "all",      label: "総合" },
   { key: "rotation", label: "回旋ズレ(AP)" },
@@ -220,11 +243,11 @@ function AngleCard({ title, primary, secondary, unit, label, normalRange, descri
     title.includes("回内外") ? "#f97316" : "#a855f7";
 
   return (
-    <div className="bg-gradient-to-br from-gray-900 to-gray-900/80 rounded-xl border border-gray-700/60 p-4 hover:border-gray-600 transition-colors">
+    <div className="bg-gradient-to-br from-gray-900 to-gray-900/80 rounded-xl border border-gray-700/60 p-2 hover:border-gray-600 transition-colors">
       <p className="text-xs text-gray-400 mb-2 font-medium">{title}</p>
       {!isNA ? (
         <div className="flex items-center gap-3">
-          <AngleGauge value={Math.abs(primary!)} max={gaugeMax} color={gaugeColor} size={72} />
+          <AngleGauge value={Math.abs(primary!)} max={gaugeMax} color={gaugeColor} size={56} />
           <div>
             <div className="flex items-baseline gap-1">
               <span className="text-2xl font-bold text-white font-mono">{primary!.toFixed(1)}</span>
@@ -301,7 +324,7 @@ function PositioningCard({ pc }: { pc: PositioningCorrection }) {
             </span>
           )}
         </div>
-        <p className="text-xs text-gray-300 leading-relaxed">{pc.rotation_advice}</p>
+        <p className="text-xs text-gray-300 leading-relaxed">{flipAdvice(pc.rotation_advice)}</p>
       </div>
 
       {/* 屈曲角（LAT像のみ） */}
@@ -348,18 +371,34 @@ function LandmarkOverlay({ landmarks, imageWidth, imageHeight }: {
   if (landmarks.olecranon)   extra.push({ key: "olecranon",    pt: landmarks.olecranon });
   return (
     <svg className="absolute inset-0 w-full h-full pointer-events-none"
-         viewBox={`0 0 ${imageWidth} ${imageHeight}`} preserveAspectRatio="none">
+         viewBox={`0 0 ${imageWidth} ${imageHeight}`}>
       {/* 骨軸ライン */}
       <line x1={landmarks.humerus_shaft.x} y1={landmarks.humerus_shaft.y}
             x2={landmarks.condyle_center.x} y2={landmarks.condyle_center.y}
-            stroke="#3b82f6" strokeWidth="2.5" strokeDasharray="8,4" opacity="0.85" />
+            stroke="#3b82f6" strokeWidth="1" strokeDasharray="4,2" opacity="0.7" />
       <line x1={landmarks.condyle_center.x} y1={landmarks.condyle_center.y}
             x2={landmarks.forearm_ext.x} y2={landmarks.forearm_ext.y}
-            stroke="#22c55e" strokeWidth="2.5" strokeDasharray="8,4" opacity="0.85" />
-      {/* 上顆間ライン */}
-      <line x1={landmarks.lateral_epicondyle.x} y1={landmarks.lateral_epicondyle.y}
-            x2={landmarks.medial_epicondyle.x}   y2={landmarks.medial_epicondyle.y}
-            stroke="#f97316" strokeWidth="2" opacity="0.7" />
+            stroke="#22c55e" strokeWidth="1" strokeDasharray="4,2" opacity="0.7" />
+      {/* 上顆間ライン（延長） */}
+      {(() => {
+        const lx = landmarks.lateral_epicondyle.x, ly = landmarks.lateral_epicondyle.y;
+        const mx = landmarks.medial_epicondyle.x, my = landmarks.medial_epicondyle.y;
+        const dx = lx - mx, dy = ly - my;
+        const ext = 1.5;
+        return (
+          <>
+            <line x1={mx - dx * ext} y1={my - dy * ext}
+                  x2={lx + dx * ext} y2={ly + dy * ext}
+                  stroke="#f97316" strokeWidth="0.5" strokeDasharray="3,3" opacity="0.3" />
+            <line x1={lx} y1={ly} x2={mx} y2={my}
+                  stroke="#f97316" strokeWidth="0.8" opacity="0.6" />
+            {/* 水平基準線 */}
+            <line x1={mx - dx * ext} y1={(ly + my) / 2}
+                  x2={lx + dx * ext} y2={(ly + my) / 2}
+                  stroke="#ffffff" strokeWidth="0.3" strokeDasharray="2,4" opacity="0.25" />
+          </>
+        );
+      })()}
       {/* 橈骨頭ライン */}
       {landmarks.radial_head && (
         <line x1={landmarks.condyle_center.x} y1={landmarks.condyle_center.y}
@@ -375,18 +414,18 @@ function LandmarkOverlay({ landmarks, imageWidth, imageHeight }: {
       {/* コアポイント */}
       {corePoints.map(({ key, pt }) => (
         <g key={key}>
-          <circle cx={pt.x} cy={pt.y} r="10" fill={LANDMARK_COLORS[key] || "#fff"} opacity="0.25" />
-          <circle cx={pt.x} cy={pt.y} r="6" fill={LANDMARK_COLORS[key] || "#fff"} stroke="white" strokeWidth="2" opacity="0.9" />
+          <circle cx={pt.x} cy={pt.y} r="3" fill={LANDMARK_COLORS[key] || "#fff"} opacity="0.2" />
+          <circle cx={pt.x} cy={pt.y} r="2" fill={LANDMARK_COLORS[key] || "#fff"} stroke="white" strokeWidth="0.5" opacity="0.9" />
         </g>
       ))}
       {/* 追加ポイント */}
       {extra.map(({ key, pt }) => {
-        const r = 6;
+        const r = 2;
         const d = `M ${pt.x} ${pt.y - r} L ${pt.x + r} ${pt.y} L ${pt.x} ${pt.y + r} L ${pt.x - r} ${pt.y} Z`;
         return (
           <g key={key}>
-            <circle cx={pt.x} cy={pt.y} r="10" fill={LANDMARK_COLORS[key]} opacity="0.2" />
-            <path d={d} fill={LANDMARK_COLORS[key]} stroke="white" strokeWidth="1.5" opacity="0.9" />
+            <circle cx={pt.x} cy={pt.y} r="3" fill={LANDMARK_COLORS[key]} opacity="0.15" />
+            <path d={d} fill={LANDMARK_COLORS[key]} stroke="white" strokeWidth="0.5" opacity="0.9" />
           </g>
         );
       })}
@@ -646,7 +685,7 @@ export default function ElbowVisionPage() {
     <div className="min-h-screen bg-gray-950">
       {/* ===== ヘッダー ===== */}
       <header className="border-b border-gray-800/80 bg-gray-900/90 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-2 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round">
@@ -682,11 +721,11 @@ export default function ElbowVisionPage() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 sm:gap-6">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-2 sm:py-3">
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-3 sm:gap-4">
 
           {/* ===== 左カラム: 画像 (3/5) ===== */}
-          <div className="lg:col-span-3 space-y-4">
+          <div className="lg:col-span-3 space-y-2">
             {!imageData && !isAnalyzing && (
               <div
                 className={`border-2 border-dashed rounded-2xl p-8 sm:p-12 text-center cursor-pointer transition-all duration-300 ${
@@ -734,24 +773,27 @@ export default function ElbowVisionPage() {
 
             {/* 画像表示 */}
             {imageData && (
-              <div className="relative rounded-2xl overflow-hidden bg-black border border-gray-700/60 group">
+              <div className="relative rounded-2xl overflow-hidden bg-black border border-gray-700/60 group flex items-center justify-center">
+                <div className="relative w-full"
+                     style={analysisResult ? { aspectRatio: `${analysisResult.image_size.width} / ${analysisResult.image_size.height}` } : undefined}>
                 {activeTab === "gradcam" && gradCamResult?.success ? (
                   <div className="relative">
-                    <img src={imageData} alt="元画像" className="w-full object-contain" />
+                    <img src={imageData} alt="元画像" className="w-full h-full object-fill" />
                     <img
                       src={gradCamResult.heatmap_overlay}
                       alt="Grad-CAMオーバーレイ"
-                      className="absolute inset-0 w-full h-full object-contain transition-opacity duration-300"
+                      className="absolute inset-0 w-full h-full object-fill transition-opacity duration-300"
                       style={{ opacity: gradCamOpacity / 100 }}
                     />
                   </div>
                 ) : (
-                  <img src={imageData} alt="肘X線" className="w-full object-contain" />
+                  <img src={imageData} alt="肘X線" className="w-full h-full object-fill" />
                 )}
                 {activeTab === "analysis" && analysisResult && showLandmarks && (
                   <LandmarkOverlay landmarks={analysisResult.landmarks}
                     imageWidth={analysisResult.image_size.width} imageHeight={analysisResult.image_size.height} />
                 )}
+                </div>
                 {/* オーバーレイコントロール */}
                 <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                   {activeTab === "analysis" && analysisResult && (
@@ -811,7 +853,7 @@ export default function ElbowVisionPage() {
           </div>
 
           {/* ===== 右カラム: 結果 (2/5) ===== */}
-          <div className="lg:col-span-2 space-y-4">
+          <div className="lg:col-span-2 space-y-2 max-h-[calc(100vh-60px)] overflow-y-auto">
             {/* タブナビゲーション */}
             <div className="flex gap-1 bg-gray-900 rounded-xl p-1 border border-gray-800">
               {([
@@ -890,7 +932,7 @@ export default function ElbowVisionPage() {
                   )}
 
                   {/* 角度カード */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 gap-2">
                     <AngleCard title="外反角 (Carrying Angle)" unit="°"
                       primary={analysisResult.landmarks.angles.carrying_angle}
                       secondary={so?.rotation_error_deg}
@@ -900,8 +942,8 @@ export default function ElbowVisionPage() {
                       secondary={so?.flexion_deg}
                       normalRange="0 - 150°" description="側面像: 伸展0° / 完全屈曲150°" />
                     <AngleCard title="回内外 (Pron./Supi.)" unit="°"
-                      primary={analysisResult.landmarks.angles.pronation_sup}
-                      label={analysisResult.landmarks.angles.ps_label}
+                      primary={-analysisResult.landmarks.angles.pronation_sup}
+                      label={flipPSText(analysisResult.landmarks.angles.ps_label)}
                       normalRange="回内80° / 回外85°" />
                     <AngleCard title="内反外反 (Varus/Valgus)" unit="°"
                       primary={analysisResult.landmarks.angles.varus_valgus}

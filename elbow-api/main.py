@@ -41,6 +41,7 @@ except ImportError:
     YOLO_INSTALLED = False
 
 _YOLO_CANDIDATE_PATHS = [
+    
     "models/yolo_pose_best.pt",
     "best.pt",
     "elbow_train/runs/pose/elbowvision_pose_model/weights/best.pt",
