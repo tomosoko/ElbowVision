@@ -1046,19 +1046,34 @@ def generate_dataset(args):
 
     print(f"\n  (手動上書きする場合は DEFAULT_LANDMARKS_NORMALIZED を編集してください)")
 
-    # AP: base_flexion >= 150° のボリュームのみ使用（伸展位のCT）
-    ap_vols  = [v for v in volumes_data if v['base_flexion'] >= 150.0]
-    if not ap_vols:
-        # 閾値内がなければ最も伸展したものだけ使用
-        ap_vols = [max(volumes_data, key=lambda x: x['base_flexion'])]
+    # --- 最近傍ボリューム選択（全ボリューム活用） ---
+    # 各目標屈曲角度に最も近いCTボリュームを使用することで、
+    # 回転量を最小化し仮想屈曲の精度を向上させる。
+    # 旧方式: LAT=90°ボリュームのみ(60-120°), AP=180°ボリュームのみ(150-180°)
+    # 新方式: 全ボリュームから最近傍選択、最大回転量を~22°に抑制
+    available_flexions = sorted([v['base_flexion'] for v in volumes_data])
+    vol_by_flexion = {v['base_flexion']: v for v in volumes_data}
 
-    # LAT: base_flexion <= 120° のボリュームのみ使用（屈曲位のCT）
-    lat_vols = [v for v in volumes_data if v['base_flexion'] <= 120.0]
-    if not lat_vols:
-        lat_vols = [min(volumes_data, key=lambda x: x['base_flexion'])]
+    def nearest_volume(target_angle):
+        """目標角度に最も近いCTボリュームを返す"""
+        best = min(available_flexions, key=lambda a: abs(a - target_angle))
+        return vol_by_flexion[best]
+
+    # AP用: 最も伸��したボリューム（後方互換）
+    ap_vols  = [max(volumes_data, key=lambda x: x['base_flexion'])]
+    # LAT用: 全ボリュームを使用（最近傍選択で生成時に決定）
+    lat_vols = sorted(volumes_data, key=lambda x: x['base_flexion'])
 
     print(f"\n  AP使用シリーズ:  base_flexion={[v['base_flexion'] for v in ap_vols]}")
-    print(f"  LAT使用シリーズ: base_flexion={[v['base_flexion'] for v in lat_vols]}")
+    print(f"  LAT使用シリーズ: base_flexion={[v['base_flexion'] for v in lat_vols]} (最近傍選択)")
+    print(f"  利用可能角度: {available_flexions}")
+
+    # 各ボリュームのカバー範囲を計算
+    for i, bf in enumerate(available_flexions):
+        lo = (bf + available_flexions[i-1]) / 2 if i > 0 else 60.0
+        hi = (bf + available_flexions[i+1]) / 2 if i < len(available_flexions) - 1 else 180.0
+        max_delta = max(bf - lo, hi - bf)
+        print(f"    {bf}° vol → {lo:.0f}-{hi:.0f}° (最大Δ={max_delta:.0f}°)")
 
     out_dir = args.out_dir
     for split in ("train", "val"):
@@ -1232,23 +1247,28 @@ def generate_dataset(args):
         print("\nSkipping AP DRR generation (--views does not include AP)")
 
     # ── LAT 像生成 ──
-    # base_flexion が最小のボリュームをサイクルで使用（最も屈曲した CT が LAT に最適）
+    # 最近傍ボリューム選択: 各目標角度に最も近いCTボリュームを使用
+    # 全角度範囲 60-180° をカバー（旧: 60-120°のみ）
+    # 各ボリュームからの最大回転量を ~22° に抑制
     if "LAT" in args.views:
-        print(f"Generating {args.n_lat} LAT DRRs...")
+        print(f"Generating {args.n_lat} LAT DRRs (full range 60-180°, nearest-volume)...")
+        vol_usage_count = {}
         for i in range(args.n_lat):
-            vd  = lat_vols[i % len(lat_vols)]
             rotation_err = random.uniform(-30.0, 30.0)
             valgus_deg   = random.uniform(-8.0, 8.0)
-            # 目標屈曲角: CT実ポジション周辺 ±20°（LAT範囲 60〜120°にクランプ）
-            flex_center  = max(60.0, min(120.0, vd['base_flexion']))
-            flexion      = max(60.0, min(120.0, random.uniform(flex_center - 20.0, flex_center + 20.0)))
+            # 目標屈曲角: 60-180° の全範囲から一様サンプリング
+            flexion = random.uniform(60.0, 180.0)
+            # 最近傍ボリュームを選択（回転量最小化）
+            vd = nearest_volume(flexion)
+            vol_usage_count[vd['base_flexion']] = vol_usage_count.get(vd['base_flexion'], 0) + 1
 
             rot_vol, rot_lm = rotate_volume_and_landmarks(
                 vd['volume'], vd['landmarks'], rotation_err, flexion,
                 base_flexion=vd['base_flexion'], valgus_deg=valgus_deg,
             )
             # 屈曲CT（<=120°）では前腕がML方向に曲がるため、AP軸投影が実際のLAT像に一致
-            lat_proj_axis = "AP" if vd['base_flexion'] <= 120 else "LAT"
+            # 中間角度(120-150°)では目標角度で判定
+            lat_proj_axis = "AP" if flexion <= 120 else "LAT"
             drr     = generate_drr(rot_vol, axis=lat_proj_axis, sid_mm=sid_mm, voxel_mm=vd['voxel_mm'])
             drr_bgr = cv2.cvtColor(drr, cv2.COLOR_GRAY2BGR)
 
@@ -1264,6 +1284,7 @@ def generate_dataset(args):
                 "carrying_angle":     0.0,
                 "valgus_deg":         round(valgus_deg, 2),
             }, split)
+        print(f"  ボリューム使用回数: {vol_usage_count}")
     else:
         print("Skipping LAT DRR generation (--views does not include LAT)")
 

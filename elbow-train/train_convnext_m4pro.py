@@ -20,8 +20,8 @@ import time
 # このスクリプトは ElbowVision/ から実行される想定
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-CSV_PATH = os.path.join(BASE_DIR, "data", "yolo_dataset_v4", "convnext_labels.csv")
-IMGS_DIR = os.path.join(BASE_DIR, "data", "yolo_dataset_v4", "images")
+CSV_PATH = os.path.join(BASE_DIR, "data", "yolo_dataset_v6", "convnext_labels.csv")
+IMGS_DIR = os.path.join(BASE_DIR, "data", "yolo_dataset_v6", "images")
 SAVE_PATH = os.path.join(BASE_DIR, "elbow-api", "elbow_convnext_best.pth")
 
 # train_angle_predictor.py を import するためにパスを追加

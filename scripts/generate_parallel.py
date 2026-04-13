@@ -25,14 +25,14 @@ from elbow_synth import (
 # ── 設定 ──────────────────────────────────────────────────────────────────────
 
 CT_DIR    = "data/raw_dicom/ct_volume/ﾃｽﾄ 008_0009900008_20260310_108Y_F_000"
-OUT_DIR   = "data/yolo_dataset_production"
-LATERALITY = "R"
+OUT_DIR   = "data/yolo_dataset_v6"
+LATERALITY = "L"  # ファントムは左腕
 SERIES     = [(4, 180.0), (8, 135.0), (12, 90.0)]  # FC85骨カーネル
 HU_MIN, HU_MAX = 50, 1000  # 骨等価樹脂P95=972HUをカバー
 TARGET_SIZE = 256
 SID_MM     = 1000.0  # CR実X線のSIDと一致
-N_AP       = 300
-N_LAT      = 600
+N_AP       = 600
+N_LAT      = 3400  # v4同等
 VAL_RATIO  = 0.15
 DOMAIN_AUG = True
 N_WORKERS  = 10  # M4 Pro 12コア → 10ワーカー（OS+他に余裕）
@@ -125,13 +125,18 @@ def generate_one_sample(args_tuple):
         base_flexion=bf, valgus_deg=valgus_deg,
     )
 
-    drr = generate_drr(rot_vol, axis=view, sid_mm=SID_MM, voxel_mm=voxel_mm)
+    # LAT像: base_flexion<=120の場合、AP軸投影がLAT像に一致
+    if view == "LAT" and base_flexion <= 120:
+        proj_axis = "AP"
+    else:
+        proj_axis = view
+    drr = generate_drr(rot_vol, axis=proj_axis, sid_mm=SID_MM, voxel_mm=voxel_mm)
     drr_bgr = cv2.cvtColor(drr, cv2.COLOR_GRAY2BGR)
 
     if DOMAIN_AUG:
         drr_bgr = apply_domain_aug(drr_bgr)
 
-    label = make_yolo_label(rot_lm, view, drr.shape[0], drr.shape[1],
+    label = make_yolo_label(rot_lm, proj_axis, drr.shape[0], drr.shape[1],
                              vol_shape=rot_vol.shape, sid_mm=SID_MM, voxel_mm=voxel_mm)
 
     fname = f"elbow_{idx:05d}"
@@ -174,16 +179,19 @@ def main():
         lm = auto_detect_landmarks(vol, laterality=lat)
         all_vols.append((vol, lm, lat, vox_mm, bf))
 
-    # AP/LAT 用ボリューム分類
-    ap_vols = [v for v in all_vols if v[4] >= 150.0]
-    if not ap_vols:
-        ap_vols = [max(all_vols, key=lambda x: x[4])]
-    lat_vols = [v for v in all_vols if v[4] <= 120.0]
-    if not lat_vols:
-        lat_vols = [min(all_vols, key=lambda x: x[4])]
+    # AP用: 最も伸展したボリューム（180°）
+    ap_vols = [max(all_vols, key=lambda x: x[4])]
+    # LAT用: 最も屈曲したボリューム（90°）のみ
+    # → 投影軸をAP固定で統一し、YOLOの学習を安定化
+    # （異なるボリュームでは投影軸がAP/LAT切り替わり、
+    #   画像の見た目が全く変わるため混在は訓練不安定の原因）
+    lat_vols = [min(all_vols, key=lambda x: x[4])]
 
     _volumes["AP"] = ap_vols
     _volumes["LAT"] = lat_vols
+
+    print(f"  AP volumes: base_flexion={[v[4] for v in ap_vols]}")
+    print(f"  LAT volumes: base_flexion={[v[4] for v in lat_vols]} (投影軸統一)")
 
     # 実X線CDF読み込み
     init_real_cdfs()
@@ -204,16 +212,16 @@ def main():
         tasks.append((idx, "AP", i % len(ap_vols), rotation_err, flexion, valgus_deg, bf, split))
         idx += 1
 
-    # LAT tasks
-    print(f"Preparing {N_LAT} LAT tasks...")
+    # LAT tasks — 90°ボリュームから60-120°を生成（投影軸=AP固定）
+    print(f"Preparing {N_LAT} LAT tasks (90° vol, range 60-120°)...")
     for i in range(N_LAT):
         rotation_err = random.uniform(-30.0, 30.0)
         valgus_deg = random.uniform(-8.0, 8.0)
-        bf = lat_vols[i % len(lat_vols)][4]
+        bf = lat_vols[0][4]  # 90°
         flex_center = max(60.0, min(120.0, bf))
         flexion = max(60.0, min(120.0, random.uniform(flex_center - 20.0, flex_center + 20.0)))
         split = "val" if i < int(N_LAT * VAL_RATIO) else "train"
-        tasks.append((idx, "LAT", i % len(lat_vols), rotation_err, flexion, valgus_deg, bf, split))
+        tasks.append((idx, "LAT", 0, rotation_err, flexion, valgus_deg, bf, split))
         idx += 1
 
     # ── 並列実行 ──
