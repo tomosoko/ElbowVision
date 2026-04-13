@@ -14,7 +14,7 @@ import cv2
 from pathlib import Path
 
 # Setup paths
-PROJECT_ROOT = "/Users/kohei/develop/Dev/vision/ElbowVision"
+PROJECT_ROOT = "/Users/kohei/develop/research/ElbowVision"
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "elbow-train"))
 
 from elbow_synth import (

@@ -6,7 +6,7 @@ DRRで訓練したYOLOモデルを実X線に適用し、
 前処理（CLAHE + ヒストグラムマッチング）の有無でキーポイント検出精度を比較する。
 
 使い方:
-  cd /Users/kohei/Dev/vision/ElbowVision
+  cd /Users/kohei/develop/research/ElbowVision
   source elbow-api/venv/bin/activate
   python scripts/test_realxray_inference.py
 

@@ -13,7 +13,7 @@ print(f"  MPS GPU: {torch.backends.mps.is_available()}")
 print(f"  PyTorch: {torch.__version__}")
 print("=" * 60)
 
-model = YOLO("yolo11n-pose.pt")
+model = YOLO("yolov8s-pose.pt")  # v4で安定動作実績あり (mAP50=0.995)
 
 start = time.time()
 results = model.train(
@@ -26,18 +26,19 @@ results = model.train(
     patience=30,
     project="runs",
     name="elbow_v6",
-    # データ拡張
-    fliplr=0.5,
-    mosaic=1.0,
-    degrees=10.0,
-    translate=0.1,
-    scale=0.3,
-    # v4と同じSGD設定（AdamWはdfl_loss爆発で不安定）
+    # v4_sgd_v2と完全一致の設定（mAP50=0.995達成実績）
     optimizer="SGD",
-    # 学習率
     lr0=0.01,
     lrf=0.01,
     warmup_epochs=3,
+    close_mosaic=10,
+    amp=False,        # MPS環境でbfloat16回避のため必須
+    # データ拡張（v4_sgd_v2と同じ）
+    fliplr=0.5,
+    mosaic=0.0,
+    degrees=5.0,
+    translate=0.05,
+    scale=0.2,
     save=True,
     save_period=20,
     verbose=True,

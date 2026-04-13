@@ -11,7 +11,7 @@ Instead of splitting the volume by PD slice (too crude), this script:
   6. Generates LAT DRR and compares with real 90 deg
 
 Usage:
-  cd /Users/kohei/develop/Dev/vision/ElbowVision
+  cd /Users/kohei/develop/research/ElbowVision
   elbow-api/venv/bin/python scripts/flexion_bone_seg.py
 """
 

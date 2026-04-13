@@ -32,7 +32,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 # ── paths ──────────────────────────────────────────────────────────────
-ROOT = "/Users/kohei/develop/Dev/vision/ElbowVision"
+ROOT = "/Users/kohei/develop/research/ElbowVision"
 sys.path.insert(0, os.path.join(ROOT, "elbow-train"))
 
 from elbow_synth import (

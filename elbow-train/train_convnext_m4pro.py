@@ -4,7 +4,7 @@ YOLO訓練完了後に実行する Phase 2 訓練。
 64GB RAM + MPS GPU をフル活用。
 
 使い方:
-  cd /Users/kohei/develop/Dev/vision/ElbowVision
+  cd /Users/kohei/develop/research/ElbowVision
   source elbow-api/venv/bin/activate
   python elbow-train/train_convnext_m4pro.py
 
