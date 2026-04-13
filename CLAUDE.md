@@ -61,6 +61,21 @@ python elbow-train/elbow_synth.py \
   - Series 8: 312sl, 135°
   - Series 12: 331sl, 屈曲90°（LAT像用）
 
+## 訓練結果記録
+
+### ConvNeXt-Small v6（2026-04-13〜14）
+```
+データ:   data/yolo_dataset_v6/  Train 3400 / Val 600
+設定:     batch=64, epochs=150(patience=30), MPS GPU
+結果:     Best val error = 0.121 deg (ep91, early stop ep96)
+モデル:   elbow-api/elbow_convnext_best.pth
+```
+
+### YOLOv8-Pose v6（2026-04-13）
+```
+mAP50 = 0.995  runs/elbow_v6/weights/best.pt
+```
+
 ## 技術ノート
 
 - 骨閾値: 2段階Otsu（ファントム骨素材対応）
