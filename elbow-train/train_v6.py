@@ -1,14 +1,14 @@
 """ElbowVision v6 — 投影軸統一データセット訓練スクリプト
 - LAT: 90°vol AP投影固定（v4方式）
 - AP: 180°vol AP投影
-- yolo11n-pose (Ultralytics YOLO11)
+- yolov8s-pose (v4_sgd_v2と同設定、mAP50=0.995実績)
 """
 from ultralytics import YOLO
 import torch
 import time
 
 print("=" * 60)
-print("  ElbowVision v6 — YOLO11n-pose 訓練")
+print("  ElbowVision v6 — YOLOv8s-pose 訓練")
 print(f"  MPS GPU: {torch.backends.mps.is_available()}")
 print(f"  PyTorch: {torch.__version__}")
 print("=" * 60)
