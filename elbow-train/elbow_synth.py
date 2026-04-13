@@ -738,7 +738,8 @@ def compute_flexion_angle(landmarks_norm: dict) -> float:
 
 def make_yolo_label(landmarks_norm: dict, axis: str, img_h: int, img_w: int,
                     vol_shape: tuple = (128, 128, 128),
-                    sid_mm: float = 1000.0, voxel_mm: float = 1.0) -> str:
+                    sid_mm: float = 1000.0, voxel_mm: float = 1.0,
+                    view_type: str = None) -> str:
     """
     YOLO Pose フォーマットのラベル文字列を生成する（透視投影対応）。
 
@@ -784,11 +785,13 @@ def make_yolo_label(landmarks_norm: dict, axis: str, img_h: int, img_w: int,
     #   LAT像:
     #     medial_epicondyle は外側上顆に重なる → occluded (1)
     #     radial_head は橈骨頭が尺骨と重なる場合あり → occluded (1)
+    # view_type が指定された場合はそちらを使用（proj_axisとview_typeが異なる場合に対応）
+    vis_axis = view_type if view_type is not None else axis
     kp_visibility = []
     for name in kp_order:
-        if axis == "AP" and name == "olecranon":
+        if vis_axis == "AP" and name == "olecranon":
             kp_visibility.append(1)   # AP像: 肘頭は後方に隠れる
-        elif axis == "LAT" and name in ("medial_epicondyle", "radial_head"):
+        elif vis_axis == "LAT" and name in ("medial_epicondyle", "radial_head"):
             kp_visibility.append(1)   # LAT像: 内側上顆・橈骨頭は重なる
         else:
             kp_visibility.append(2)   # visible

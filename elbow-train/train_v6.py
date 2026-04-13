@@ -24,15 +24,19 @@ results = model.train(
     device="mps",
     workers=8,
     patience=30,
-    project="runs",
+    project="/Users/kohei/develop/research/ElbowVision/runs",
     name="elbow_v6",
-    # v4_sgd_v2と完全一致の設定（mAP50=0.995達成実績）
+    # v4より大きいbbox(w≈0.67)のためDFL勾配が大きい → loss weight調整
     optimizer="SGD",
     lr0=0.01,
     lrf=0.01,
     warmup_epochs=3,
     close_mosaic=10,
     amp=False,        # MPS環境でbfloat16回避のため必須
+    # Loss weights: dfl/box を下げてbbox回帰勾配を弱める（v4 default: dfl=1.5, box=7.5）
+    dfl=0.5,
+    box=3.0,
+    pose=12.0,
     # データ拡張（v4_sgd_v2と同じ）
     fliplr=0.5,
     mosaic=0.0,

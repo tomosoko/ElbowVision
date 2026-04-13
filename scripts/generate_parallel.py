@@ -130,14 +130,35 @@ def generate_one_sample(args_tuple):
         proj_axis = "AP"
     else:
         proj_axis = view
-    drr = generate_drr(rot_vol, axis=proj_axis, sid_mm=SID_MM, voxel_mm=voxel_mm)
+
+    # AP投影(LAT像)でML方向が不足する場合、左側にパディングして正方形DRRを生成
+    # 屈曲腕の前腕がML負方向に伸びて画像外に出ないようにする
+    if proj_axis == "AP":
+        NP, NA, NM = rot_vol.shape
+        if NM < NP:
+            pad_left = NP - NM  # 正方形にするためのパディング量
+            rot_vol_drr = np.pad(rot_vol, [(0, 0), (0, 0), (pad_left, 0)], mode='constant')
+            # ランドマークのML正規化座標を更新（パディング後のNMで再スケール）
+            NM_new = NP
+            rot_lm_drr = {
+                k: (v[0], v[1], (v[2] * NM + pad_left) / NM_new)
+                for k, v in rot_lm.items()
+            }
+            vol_shape_drr = rot_vol_drr.shape
+        else:
+            rot_vol_drr, rot_lm_drr, vol_shape_drr = rot_vol, rot_lm, rot_vol.shape
+    else:
+        rot_vol_drr, rot_lm_drr, vol_shape_drr = rot_vol, rot_lm, rot_vol.shape
+
+    drr = generate_drr(rot_vol_drr, axis=proj_axis, sid_mm=SID_MM, voxel_mm=voxel_mm)
     drr_bgr = cv2.cvtColor(drr, cv2.COLOR_GRAY2BGR)
 
     if DOMAIN_AUG:
         drr_bgr = apply_domain_aug(drr_bgr)
 
-    label = make_yolo_label(rot_lm, proj_axis, drr.shape[0], drr.shape[1],
-                             vol_shape=rot_vol.shape, sid_mm=SID_MM, voxel_mm=voxel_mm)
+    label = make_yolo_label(rot_lm_drr, proj_axis, drr.shape[0], drr.shape[1],
+                             vol_shape=vol_shape_drr, sid_mm=SID_MM, voxel_mm=voxel_mm,
+                             view_type=view)
 
     fname = f"elbow_{idx:05d}"
     cv2.imwrite(os.path.join(OUT_DIR, "images", split, f"{fname}.png"), drr_bgr)
