@@ -32,12 +32,12 @@ results = model.train(
     degrees=10.0,
     translate=0.1,
     scale=0.3,
-    # optimizer (Muon uses bfloat16, not supported on MPS → AdamW)
-    optimizer="AdamW",
+    # v4と同じSGD設定（AdamWはdfl_loss爆発で不安定）
+    optimizer="SGD",
     # 学習率
-    lr0=0.001,
+    lr0=0.01,
     lrf=0.01,
-    warmup_epochs=5,
+    warmup_epochs=3,
     save=True,
     save_period=20,
     verbose=True,
