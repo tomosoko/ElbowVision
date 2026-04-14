@@ -11,6 +11,7 @@ from elbow_synth import (
     rotation_matrix_z,
     rotate_volume_and_landmarks,
     generate_drr,
+    transform_landmarks_canonical,
 )
 
 
@@ -194,6 +195,66 @@ class TestGenerateDRR:
         thick_center = float(drr_thick[32, 24])
         assert thick_center >= thin_center, \
             f"Thick bone ({thick_center}) should be >= thin bone ({thin_center})"
+
+
+class TestTransformLandmarksCanonical:
+    """transform_landmarks_canonical のテスト."""
+
+    def _lm(self, x, y, z):
+        return {"A": (x, y, z)}
+
+    def test_no_transform_returns_same(self):
+        """転置[0,1,2]・反転なしなら元の値を返す."""
+        lm = {"pt": (0.1, 0.2, 0.3)}
+        result = transform_landmarks_canonical(lm, [0, 1, 2], [False, False, False])
+        assert result["pt"] == (0.1, 0.2, 0.3)
+
+    def test_flip_axis0(self):
+        """axis0を反転: n → 1-n."""
+        lm = {"pt": (0.2, 0.5, 0.8)}
+        result = transform_landmarks_canonical(lm, [0, 1, 2], [True, False, False])
+        assert abs(result["pt"][0] - 0.8) < 1e-10
+        assert abs(result["pt"][1] - 0.5) < 1e-10
+        assert abs(result["pt"][2] - 0.8) < 1e-10
+
+    def test_transpose_order(self):
+        """転置: new_axis_i = 元axis_transpose[i]."""
+        lm = {"pt": (0.1, 0.5, 0.9)}
+        # transpose [2, 0, 1]: new_i0 = old_2, new_i1 = old_0, new_i2 = old_1
+        result = transform_landmarks_canonical(lm, [2, 0, 1], [False, False, False])
+        assert abs(result["pt"][0] - 0.9) < 1e-10
+        assert abs(result["pt"][1] - 0.1) < 1e-10
+        assert abs(result["pt"][2] - 0.5) < 1e-10
+
+    def test_multiple_landmarks(self):
+        """複数ランドマークが全て変換される."""
+        lm = {"A": (0.2, 0.3, 0.4), "B": (0.6, 0.7, 0.8)}
+        result = transform_landmarks_canonical(lm, [0, 1, 2], [False, False, True])
+        assert len(result) == 2
+        assert abs(result["A"][2] - 0.6) < 1e-10
+        assert abs(result["B"][2] - 0.2) < 1e-10
+
+    def test_flip_all_axes(self):
+        """全軸反転: (x,y,z) → (1-x, 1-y, 1-z)."""
+        lm = {"pt": (0.2, 0.3, 0.4)}
+        result = transform_landmarks_canonical(lm, [0, 1, 2], [True, True, True])
+        assert abs(result["pt"][0] - 0.8) < 1e-10
+        assert abs(result["pt"][1] - 0.7) < 1e-10
+        assert abs(result["pt"][2] - 0.6) < 1e-10
+
+    def test_empty_landmarks(self):
+        """空の辞書は空を返す."""
+        result = transform_landmarks_canonical({}, [0, 1, 2], [False, False, False])
+        assert result == {}
+
+    def test_transpose_then_flip(self):
+        """転置後に反転が正しく適用される."""
+        lm = {"pt": (0.1, 0.5, 0.9)}
+        # transpose [2, 1, 0]: new = (0.9, 0.5, 0.1), then flip axis0: (0.1, 0.5, 0.1)
+        result = transform_landmarks_canonical(lm, [2, 1, 0], [True, False, False])
+        assert abs(result["pt"][0] - 0.1) < 1e-10
+        assert abs(result["pt"][1] - 0.5) < 1e-10
+        assert abs(result["pt"][2] - 0.1) < 1e-10
 
 
 class TestEndToEnd:

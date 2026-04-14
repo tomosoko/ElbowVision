@@ -14,10 +14,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "elbow-train"))
 from ct_reorient import (
     correct_scan_direction,
     detect_humeral_axis,
+    detect_transepicondylar_axis,
     build_anatomical_rotation,
     apply_rotation,
     rotate_around_long_axis,
     generate_drr,
+    _axis_arrow,
+    parse_coords,
 )
 
 
@@ -264,6 +267,57 @@ class TestRotateAroundLongAxis:
         assert abs(bone_orig - bone_rot) / bone_orig < 0.1
 
 
+class TestDetectTransepicondylarAxis:
+    """detect_transepicondylar_axis の手動指定パスのテスト."""
+
+    def _dummy_volume(self):
+        vol = np.zeros((32, 32, 32), dtype=np.float32)
+        vol[10:25, 14:18, 14:18] = 500.0
+        return vol
+
+    def test_manual_returns_normalized_axis(self):
+        """手動指定時: 正規化されたベクトルを返す."""
+        vol = self._dummy_volume()
+        lat = np.array([0.0, 0.0, 1.0])
+        med = np.array([0.0, 0.0, 0.0])
+        axis = detect_transepicondylar_axis(
+            vol, np.array([1.0, 0.0, 0.0]), np.array([16.0, 16.0, 16.0]),
+            200.0, (1.0, 1.0, 1.0), epic_lat_manual=lat, epic_med_manual=med
+        )
+        assert abs(np.linalg.norm(axis) - 1.0) < 1e-6
+
+    def test_manual_direction_lat_minus_med(self):
+        """手動指定時: 方向は lat - med を正規化したもの."""
+        vol = self._dummy_volume()
+        lat = np.array([0.0, 0.0, 3.0])
+        med = np.array([0.0, 0.0, 0.0])
+        axis = detect_transepicondylar_axis(
+            vol, np.array([1.0, 0.0, 0.0]), np.array([16.0, 16.0, 16.0]),
+            200.0, (1.0, 1.0, 1.0), epic_lat_manual=lat, epic_med_manual=med
+        )
+        np.testing.assert_allclose(axis, [0.0, 0.0, 1.0], atol=1e-6)
+
+    def test_manual_reverse_direction(self):
+        """med > lat の場合は逆方向."""
+        vol = self._dummy_volume()
+        lat = np.array([0.0, 0.0, 0.0])
+        med = np.array([0.0, 0.0, 4.0])
+        axis = detect_transepicondylar_axis(
+            vol, np.array([1.0, 0.0, 0.0]), np.array([16.0, 16.0, 16.0]),
+            200.0, (1.0, 1.0, 1.0), epic_lat_manual=lat, epic_med_manual=med
+        )
+        np.testing.assert_allclose(axis, [0.0, 0.0, -1.0], atol=1e-6)
+
+    def test_auto_empty_volume_fallback(self):
+        """骨がない場合はデフォルト軸 [0,0,1] を返す."""
+        vol = np.zeros((32, 32, 32), dtype=np.float32)
+        axis = detect_transepicondylar_axis(
+            vol, np.array([1.0, 0.0, 0.0]), np.array([16.0, 16.0, 16.0]),
+            200.0, (1.0, 1.0, 1.0)
+        )
+        np.testing.assert_allclose(axis, [0.0, 0.0, 1.0], atol=1e-6)
+
+
 # ─── generate_drr テスト ──────────────────────────────────────────────────────
 
 
@@ -353,6 +407,64 @@ class TestIntegration:
         # 異なる回転角ではDRRが異なるはず
         assert not np.array_equal(drrs[0], drrs[1])
         assert not np.array_equal(drrs[0], drrs[2])
+
+
+class TestAxisArrow:
+    def test_right_0_deg(self):
+        assert _axis_arrow(0.0) == "→"
+
+    def test_right_22_deg_still_right(self):
+        assert _axis_arrow(22.0) == "→"
+
+    def test_northeast_45_deg(self):
+        assert _axis_arrow(45.0) == "↗"
+
+    def test_up_90_deg(self):
+        assert _axis_arrow(90.0) == "↑"
+
+    def test_left_160_deg(self):
+        # 157.5 ≤ angle < 180 → "←"
+        assert _axis_arrow(160.0) == "←"
+
+    def test_left_minus_180_deg(self):
+        assert _axis_arrow(-180.0) == "←"
+
+    def test_down_minus_90_deg(self):
+        assert _axis_arrow(-90.0) == "↓"
+
+    def test_returns_string(self):
+        assert isinstance(_axis_arrow(0.0), str)
+
+    def test_out_of_range_returns_bullet(self):
+        # Values that don't match any range
+        result = _axis_arrow(200.0)
+        assert isinstance(result, str)
+
+
+class TestParseCoords:
+    def test_three_values(self):
+        result = parse_coords("1.0,2.0,3.0")
+        assert len(result) == 3
+        assert abs(result[0] - 1.0) < 1e-9
+        assert abs(result[1] - 2.0) < 1e-9
+        assert abs(result[2] - 3.0) < 1e-9
+
+    def test_returns_numpy_array(self):
+        result = parse_coords("0.0,0.0,1.0")
+        import numpy as np
+        assert isinstance(result, np.ndarray)
+
+    def test_negative_values(self):
+        result = parse_coords("-1.0,0.5,-0.5")
+        assert abs(result[0] - (-1.0)) < 1e-9
+
+    def test_integer_strings(self):
+        result = parse_coords("1,2,3")
+        assert abs(result[0] - 1.0) < 1e-9
+
+    def test_float_dtype(self):
+        result = parse_coords("1,2,3")
+        assert result.dtype.kind == "f"
 
 
 if __name__ == "__main__":

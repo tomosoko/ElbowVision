@@ -76,6 +76,22 @@ python elbow-train/elbow_synth.py \
 mAP50 = 0.995  runs/elbow_v6/weights/best.pt
 ```
 
+## テスト（254件全通過）
+```bash
+cd /Users/kohei/develop/research/ElbowVision
+/Users/kohei/develop/research/ElbowVision/elbow-api/venv/bin/python -m pytest -q
+```
+| テストファイル | 件数 | 対象 |
+|---|---|---|
+| `tests/test_bland_altman.py` | 17 | Bland-Altman解析 |
+| `tests/test_ct_reorient.py` | 47 | CT再方向付け + _axis_arrow + parse_coords |
+| `tests/test_elbow_synth.py` | 24 | DRR生成・回転行列・transform_landmarks_canonical |
+| `tests/test_angle_functions.py` | 13 | carrying/flexion angle計算 |
+| `tests/test_make_yolo_label.py` | 15 | YOLOラベル生成・透視投影 |
+| `tests/test_warmup_scheduler.py` | 8 | WarmupCosineScheduler |
+| `tests/test_elbow_dataset.py` | 9 | ElbowDataset._resolve_img_path + __getitem__ |
+| `elbow-api/tests/test_api.py` | 57 | FastAPI エンドポイント |
+
 ## 技術ノート
 
 - 骨閾値: 2段階Otsu（ファントム骨素材対応）
