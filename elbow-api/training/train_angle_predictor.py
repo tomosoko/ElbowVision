@@ -373,6 +373,13 @@ def train(args):
     if writer:
         writer.close()
 
+    # 一時CSVを削除
+    for tmp in (_tmp_train, _tmp_val):
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
     # -- Loss曲線をPNG保存 --
     plot_path = os.path.join(
         os.path.dirname(os.path.dirname(__file__)),
