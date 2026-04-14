@@ -137,7 +137,7 @@ def generate_fig5b_v6_mae_summary(results: list[dict], out_path: Path) -> None:
     # Improvement arrow annotation
     ax.annotate("", xy=(1, drrval_v6 + 0.05), xytext=(0, drrval_v5 - 0.05),
                 arrowprops=dict(arrowstyle="->", color="red", lw=2))
-    ax.text(0.5, (drrval_v5 + drrval_v6) / 2, "−66%", ha="center", va="center",
+    ax.text(0.5, (drrval_v5 + drrval_v6) / 2, "−67%", ha="center", va="center",
             fontsize=10, color="red", fontweight="bold",
             bbox=dict(facecolor="white", edgecolor="red", alpha=0.8, boxstyle="round,pad=0.2"))
 
