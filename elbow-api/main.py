@@ -509,7 +509,7 @@ def detect_with_yolo_pose(image_array: np.ndarray) -> Optional[dict]:
         if view_type == "AP" and abs(pronation_sup) > 5:
             direction = "回内" if pronation_sup > 0 else "回外"
             correction = "回外" if pronation_sup > 0 else "回内"
-            positioning_advice = f"► {direction}が検出されました。側面撮影時は前腕を「{correction}」させてください。"
+            positioning_advice = f"► {direction}が検出されました。前腕を「{correction}」させてください。"
         else:
             positioning_advice = "► ポジショニングは良好です。現在の軸を維持してください。"
 
@@ -668,6 +668,7 @@ def detect_bone_landmarks_classical(image_array: np.ndarray) -> dict:
             "message": qa_msg, "color": qa_color,
             "symmetry_ratio": round(symmetry_ratio, 2),
             "positioning_advice": positioning_advice,
+            "inference_engine": "Classical CV",
         },
         "angles": {
             "carrying_angle": carrying_angle, "flexion": flexion,
@@ -773,10 +774,8 @@ async def analyze_elbow(file: UploadFile = File(...)):
         if primary_angle is not None:
             edge_validation = validate_angle_with_edges(image_array, primary_angle)
 
-        # ポジショニング補正推定（外顆間距離 × 体格）
-        positioning_correction = estimate_positioning_correction(image_array, landmarks)
-
         # ConvNeXt セカンドオピニオン（ポジショニングズレ量推定）
+        # NOTE: estimate_positioning_correctionより先に実行してlandmarksを更新する必要がある
         second_opinion = None
         if TORCH_INSTALLED and convnext_model is not None:
             try:
@@ -797,10 +796,13 @@ async def analyze_elbow(file: UploadFile = File(...)):
 
         # ConvNeXt屈曲角でlandmarks.angles.flexionを上書き（LAT像のみ）
         # v6 LAT像はAP投影なのでYOLO幾何計算では正確な屈曲角が得られない
-        # NOTE: positioning_correction.get("angles") は常にNoneのため誤りだった
+        # estimate_positioning_correctionより前に適用しないとflexion_adviceが不正確になる
         if (second_opinion is not None
                 and second_opinion.get("flexion_deg") is not None):
             landmarks["angles"]["flexion"] = second_opinion["flexion_deg"]
+
+        # ポジショニング補正推定（外顆間距離 × 体格）— ConvNeXt上書き後に実行
+        positioning_correction = estimate_positioning_correction(image_array, landmarks)
 
         # 推論統計の記録
         _record_stats(landmarks)
@@ -908,8 +910,7 @@ def _analyze_single_image(image_array: np.ndarray) -> dict:
     if primary_angle is not None:
         edge_validation = validate_angle_with_edges(image_array, primary_angle)
 
-    positioning_correction = estimate_positioning_correction(image_array, landmarks)
-
+    # ConvNeXt セカンドオピニオン — estimate_positioning_correctionより先に実行
     second_opinion = None
     if TORCH_INSTALLED and convnext_model is not None:
         try:
@@ -928,9 +929,13 @@ def _analyze_single_image(image_array: np.ndarray) -> dict:
             print(f"ConvNeXt inference failed: {e}")
 
     # ConvNeXt屈曲角でlandmarks.angles.flexionを上書き（LAT像のみ）
+    # estimate_positioning_correctionより前に適用しないとflexion_adviceが不正確になる
     if (second_opinion is not None
             and second_opinion.get("flexion_deg") is not None):
         landmarks["angles"]["flexion"] = second_opinion["flexion_deg"]
+
+    # ポジショニング補正推定 — ConvNeXt上書き後に実行
+    positioning_correction = estimate_positioning_correction(image_array, landmarks)
 
     _record_stats(landmarks)
 

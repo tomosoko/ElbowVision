@@ -621,3 +621,32 @@ class TestSecondOpinionStructure:
         # ConvNeXtが使えてLATと判定された場合、second_opinion.flexion_degとangles.flexionが一致
         if so is not None and so.get("flexion_deg") is not None:
             assert angles.get("flexion") == so["flexion_deg"]
+
+    def test_positioning_correction_uses_convnext_flexion(self, client):
+        """positioning_correctionのflexion_degはConvNeXt上書き後の値と一致すること
+        （YOLO幾何値ではなくConvNeXt値をpositioning_correctionに反映するため、
+         estimate_positioning_correctionはConvNeXt上書き後に呼ばれなければならない）"""
+        r = client.post("/api/analyze",
+                        files={"file": ("test.png", make_test_image(), "image/png")})
+        data = r.json()
+        pc = data.get("positioning_correction", {})
+        angles = data.get("landmarks", {}).get("angles", {})
+        so = data.get("second_opinion")
+        # LAT+ConvNeXt使用時: positioning_correction.flexion_deg == landmarks.angles.flexion
+        if so is not None and so.get("flexion_deg") is not None:
+            pc_flexion = pc.get("flexion_deg")
+            lm_flexion = angles.get("flexion")
+            # どちらもConvNeXt値(second_opinion.flexion_deg)と一致するはず
+            assert pc_flexion == so["flexion_deg"], (
+                f"positioning_correction.flexion_deg ({pc_flexion}) != "
+                f"second_opinion.flexion_deg ({so['flexion_deg']})"
+            )
+            assert lm_flexion == so["flexion_deg"]
+
+    def test_inference_engine_present_in_qa(self, client):
+        """Classical CVフォールバック時もqa.inference_engineキーが存在すること"""
+        r = client.post("/api/analyze",
+                        files={"file": ("test.png", make_test_image(), "image/png")})
+        data = r.json()
+        qa = data.get("landmarks", {}).get("qa", {})
+        assert "inference_engine" in qa, "qa に inference_engine キーがない"
