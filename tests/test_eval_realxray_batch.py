@@ -289,6 +289,22 @@ class TestEdgeCases:
         n_val = int(n_line.split("=")[1].strip())
         assert n_val == 6
 
+    def test_zero_gt_angle_included_in_ba(self, tmp_path):
+        """gt_flexion_deg = 0.0 の行は集計に含まれなければならない
+        （旧コードの falsy チェックで 0.0 が除外されるバグのリグレッションテスト）"""
+        # 有効行: GT=0.0, GT=10.0, ... GT=50.0 (計6行)
+        gt = [0.0, 10.0, 20.0, 30.0, 40.0, 50.0]
+        pred = [g + 1.0 for g in gt]
+        csv_path = _write_pred_csv(tmp_path, gt, pred)
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        bland_altman_analysis(csv_path, str(out_dir))
+        summary = _read_summary(out_dir)
+        n_line = next(l for l in summary.splitlines() if l.strip().startswith("n "))
+        n_val = int(n_line.split("=")[1].strip())
+        # 0.0 の行が除外されたら n=5 になる（バグ再現）→ 正しくは n=6
+        assert n_val == 6, f"GT=0.0 が除外されている (n={n_val}, expected 6)"
+
     def test_summary_contains_header(self, tmp_path):
         """summary.txt に Bland-Altman のヘッダーが含まれる"""
         gt = list(range(90, 181, 10))

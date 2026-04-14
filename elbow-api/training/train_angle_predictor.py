@@ -44,6 +44,7 @@ OsteoVision の train_angle_predictor.py を肘用に移植。
 import argparse
 import os
 import sys
+import tempfile
 from datetime import datetime
 
 import matplotlib
@@ -236,11 +237,15 @@ def train(args):
             lat_count = (views.str.upper() == "LAT").sum()
             print(f"  {split_name}: AP={ap_count}, LAT={lat_count}")
 
-    df_train.to_csv("/tmp/_train_split.csv", index=False)
-    df_val.to_csv("/tmp/_val_split.csv", index=False)
+    # プロセス固有のtempファイルを使用（並行実行時の競合を防ぐ）
+    _pid = os.getpid()
+    _tmp_train = os.path.join(tempfile.gettempdir(), f"_elbow_train_{_pid}.csv")
+    _tmp_val   = os.path.join(tempfile.gettempdir(), f"_elbow_val_{_pid}.csv")
+    df_train.to_csv(_tmp_train, index=False)
+    df_val.to_csv(_tmp_val, index=False)
 
-    train_ds = ElbowDataset("/tmp/_train_split.csv", args.imgs, transform)
-    val_ds = ElbowDataset("/tmp/_val_split.csv", args.imgs, val_transform)
+    train_ds = ElbowDataset(_tmp_train, args.imgs, transform)
+    val_ds = ElbowDataset(_tmp_val, args.imgs, val_transform)
 
     num_workers = getattr(args, 'num_workers', 4)
     train_loader = DataLoader(
@@ -281,6 +286,9 @@ def train(args):
         os.path.dirname(os.path.dirname(__file__)), "elbow_convnext_best.pth"
     )
 
+    # 損失関数（ループ外で1度だけ生成）
+    huber = nn.HuberLoss(delta=10.0, reduction='none')
+
     # 記録用
     train_losses = []
     val_losses = []
@@ -301,20 +309,18 @@ def train(args):
             if use_amp and scaler is not None:
                 with torch.amp.autocast("cuda", dtype=amp_dtype):
                     preds = model(images)
-                    huber = nn.HuberLoss(delta=10.0, reduction='none')
                     loss = (huber(preds, targets) * masks).mean()
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
             else:
                 preds = model(images)
-                huber = nn.HuberLoss(delta=10.0, reduction='none')
                 loss = (huber(preds, targets) * masks).mean()
                 loss.backward()
                 optimizer.step()
 
             train_loss += loss.item()
-        train_loss /= len(train_loader)
+        train_loss /= max(len(train_loader), 1)
 
         # -- 検証 --
         model.eval()
@@ -327,8 +333,7 @@ def train(args):
                     masks.to(device),
                 )
                 preds = model(images)
-                huber_val = nn.HuberLoss(delta=10.0, reduction='none')
-                val_loss += (huber_val(preds, targets) * masks).mean().item()
+                val_loss += (huber(preds, targets) * masks).mean().item()
         val_loss /= max(len(val_loader), 1)
 
         current_lr = scheduler.get_last_lr()[0]
