@@ -56,17 +56,36 @@ def main() -> None:
 
     # ── 学習済みモデル ──────────────────────────────────────────────────────
     print("【学習済みモデル】")
-    ok &= _check("ConvNeXt best.pth",
-                 R / "runs/angle_estimator/best.pth",
-                 required=False)
+    _check("ConvNeXt v5 best.pth (旧)",
+           R / "runs/angle_estimator/best.pth",
+           required=False)
+    ok &= _check("ConvNeXt v6 best.pth (現在)",
+                 R / "elbow-api/elbow_convnext_best.pth",
+                 required=True)
+    ok &= _check("YOLOv8-Pose v6 best.pt",
+                 R / "elbow-api/models/yolo_pose_best.pt",
+                 required=True)
     print()
 
     # ── Phase 1 解析結果 ──────────────────────────────────────────────────────
-    print("【Phase 1 解析結果】")
+    print("【Phase 1 解析結果 (v5)】")
     _check("Bland-Altman summary.txt",
            R / "results/bland_altman/summary.txt")
     _check("Bland-Altman predictions.csv",
            R / "results/bland_altman/predictions.csv")
+
+    print()
+    print("【v6 解析結果】")
+    _check("Bland-Altman summary_v6.txt",
+           R / "results/bland_altman/summary_v6.txt")
+    _check("Bland-Altman predictions_v6.csv",
+           R / "results/bland_altman/predictions_v6.csv")
+    _check("fig4_bland_altman_v6.png",
+           R / "results/figures/fig4_bland_altman_v6.png",
+           required=False)
+    _check("table1_v6_bland_altman.tex",
+           R / "results/paper_latex/table1_v6_bland_altman.tex",
+           required=False)
     _check("LOO self-test results.csv",
            R / "results/self_test_loo/self_test_results.csv")
     _check("LOO self-test summary.txt",
@@ -155,13 +174,21 @@ def main() -> None:
         print()
 
     # ── BA サマリー表示 ──────────────────────────────────────────────────────
-    ba_summary = R / "results/bland_altman/summary.txt"
-    if ba_summary.exists():
-        print("【Bland-Altman 最新結果 (ConvNeXt val)】")
-        for line in ba_summary.read_text().splitlines():
-            if any(k in line for k in ["n=", "MAE", "Bias", "LoA", "ICC", "RMSE"]):
+    ba_v6 = R / "results/bland_altman/summary_v6.txt"
+    if ba_v6.exists():
+        print("【Bland-Altman 最新結果 (ConvNeXt v6 val, n=510 LAT)】")
+        for line in ba_v6.read_text().splitlines():
+            if any(k in line for k in ["n=", "MAE", "Bias", "LoA", "ICC", "RMSE", "PASS", "FAIL"]):
                 print(f"  {line.strip()}")
         print()
+    else:
+        ba_summary = R / "results/bland_altman/summary.txt"
+        if ba_summary.exists():
+            print("【Bland-Altman 最新結果 (ConvNeXt v5 val)】")
+            for line in ba_summary.read_text().splitlines():
+                if any(k in line for k in ["n=", "MAE", "Bias", "LoA", "ICC", "RMSE"]):
+                    print(f"  {line.strip()}")
+            print()
 
     # ── 最終判定 ────────────────────────────────────────────────────────────
     if ok:
