@@ -3,7 +3,15 @@ import sys
 import os
 import math
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'elbow-api', 'training'))
+
+# スケジューラー単体テストではoptimizer.step()なしでsched.step()を呼ぶため
+# PyTorchの順序警告を抑制する
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:Detected call of.*lr_scheduler.step:UserWarning"
+)
 
 import torch
 import torch.optim as optim

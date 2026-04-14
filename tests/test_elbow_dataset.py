@@ -29,7 +29,7 @@ def _make_csv(tmp_path, rows):
 def _make_image(path: Path, size=(32, 32)):
     """ダミー PNG 画像を作成."""
     from PIL import Image
-    img = Image.fromarray(np.zeros((*size, 3), dtype=np.uint8), mode="RGB")
+    img = Image.fromarray(np.zeros((*size, 3), dtype=np.uint8))
     img.save(path)
 
 
