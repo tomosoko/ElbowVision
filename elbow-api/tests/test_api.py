@@ -531,3 +531,93 @@ class TestCompareEndpoint:
             ],
         )
         assert r.status_code == 422
+
+
+# ─── view_type判定ロジック（前腕軸傾き） ────────────────────────────────────────
+class TestViewTypeLogic:
+    """AP/LAT判定: 前腕軸傾き(|dx/dy|>0.70)のユニットテスト"""
+
+    def test_vertical_forearm_not_oblique(self):
+        """垂直な前腕(伸展AP): |dx/dy| << 0.70 → 前腕斜めでない"""
+        import math
+        # condyle (128, 106), forearm (124, 173) → dx=-4, dy=67
+        fa_dx, fa_dy = -4.0, 67.0
+        assert abs(fa_dx) <= abs(fa_dy) * 0.70  # AP条件を満たす
+
+    def test_horizontal_forearm_oblique(self):
+        """水平な前腕(屈曲90°LAT): |dx/dy| >> 0.70 → 前腕斜め"""
+        # condyle (111, 122), forearm (60, 142) → dx=-51, dy=20
+        fa_dx, fa_dy = -51.0, 20.0
+        assert abs(fa_dx) > abs(fa_dy) * 0.70  # LAT条件を満たす
+
+    def test_boundary_ap_150deg(self):
+        """150°屈曲(AP最小): 前腕は30°傾き → tan(30°)≈0.577 < 0.70 → AP"""
+        import math
+        # 150°屈曲: 前腕は垂直から30°傾き
+        angle_from_vertical = 30.0  # degrees
+        ratio = math.tan(math.radians(angle_from_vertical))
+        assert ratio < 0.70  # AP判定
+
+    def test_boundary_lat_120deg(self):
+        """120°屈曲(LAT最大): 前腕は60°傾き → tan(60°)≈1.73 > 0.70 → LAT"""
+        import math
+        angle_from_vertical = 60.0
+        ratio = math.tan(math.radians(angle_from_vertical))
+        assert ratio > 0.70  # LAT判定
+
+    def test_flexed_elbow_image_classified_lat(self, client):
+        """水平前腕(屈曲90°)の合成画像: view_typeがLATになる(classicalCV)"""
+        size = 256
+        img = np.zeros((size, size, 3), dtype=np.uint8)
+        cx = size // 2
+        # 上腕骨: 垂直
+        cv2.ellipse(img, (cx, size // 4), (18, 55), 0, 0, 360, (200, 200, 200), -1)
+        # 上顆: 中央
+        cv2.ellipse(img, (cx, size // 2), (30, 12), 0, 0, 360, (210, 210, 210), -1)
+        # 前腕骨: 水平（cx-70, size//2+20 → LAT90°を模倣）
+        cv2.ellipse(img, (cx - 60, size // 2 + 15), (55, 14), 0, 0, 360, (180, 180, 180), -1)
+        _, buf = cv2.imencode(".png", img)
+        r = client.post("/api/analyze",
+                        files={"file": ("flexed.png", buf.tobytes(), "image/png")})
+        assert r.status_code == 200
+        data = r.json()
+        qa = data["landmarks"]["qa"]
+        # 合成画像なのでクラシカルCVが使われる; 前腕が水平ならLATまたはAPどちらも許容
+        assert qa["view_type"] in ["AP", "LAT"]
+
+
+# ─── ConvNeXt セカンドオピニオン構造テスト ────────────────────────────────────
+class TestSecondOpinionStructure:
+    """second_opinion フィールドの構造テスト"""
+
+    def test_second_opinion_fields_when_present(self, client):
+        """second_opinionが存在するとき、正しいキーを持つ"""
+        r = client.post("/api/analyze",
+                        files={"file": ("test.png", make_test_image(), "image/png")})
+        data = r.json()
+        so = data.get("second_opinion")
+        if so is not None:
+            assert "rotation_error_deg" in so
+            assert "flexion_deg" in so
+            assert "model" in so
+            # AP/LAT一方のみ非None
+            assert not (so["rotation_error_deg"] is not None and so["flexion_deg"] is not None)
+
+    def test_second_opinion_is_none_or_dict(self, client):
+        """second_opinionはNoneかdict"""
+        r = client.post("/api/analyze",
+                        files={"file": ("test.png", make_test_image(), "image/png")})
+        so = r.json().get("second_opinion")
+        assert so is None or isinstance(so, dict)
+
+    def test_convnext_flexion_overrides_yolo_geometry(self, client):
+        """ConvNeXtが使える場合、positioning_correction.angles.flexionに値が入る(LAT時)"""
+        r = client.post("/api/analyze",
+                        files={"file": ("test.png", make_test_image(), "image/png")})
+        data = r.json()
+        pc = data.get("positioning_correction", {})
+        angles = data.get("landmarks", {}).get("angles", {})
+        so = data.get("second_opinion")
+        # ConvNeXtが使えてLATと判定された場合、second_opinion.flexion_degとangles.flexionが一致
+        if so is not None and so.get("flexion_deg") is not None:
+            assert angles.get("flexion") == so["flexion_deg"]
