@@ -33,6 +33,9 @@ from main import (
     estimate_positioning_correction,
     validate_angle_with_edges,
     yolo_model,
+    convnext_model,
+    convnext_transforms,
+    device as convnext_device,
 )
 
 # ─── 定数 ──────────────────────────────────────────────────────────────────────
@@ -156,6 +159,24 @@ def run_inference(image_path: str) -> dict:
 
     # ポジショニング補正推定
     correction = estimate_positioning_correction(image_array, landmarks)
+
+    # ConvNeXt セカンドオピニオン（LAT屈曲角の上書き）
+    if convnext_model is not None:
+        try:
+            import torch
+            from PIL import Image as PILImage
+            img_rgb = cv2.cvtColor(image_array, cv2.COLOR_BGR2RGB)
+            pil_img = PILImage.fromarray(img_rgb)
+            img_t = convnext_transforms(pil_img).to(convnext_device)
+            with torch.no_grad():
+                pred = convnext_model(img_t.unsqueeze(0))[0].cpu().numpy()
+            view = landmarks["qa"]["view_type"]
+            if view == "LAT":
+                landmarks["angles"]["flexion"] = round(float(pred[1]), 1)
+            elif view == "AP":
+                correction["rotation_error"] = round(float(pred[0]), 1)
+        except Exception as e:
+            print(f"ConvNeXt inference failed: {e}")
 
     return {
         "filename": filename,

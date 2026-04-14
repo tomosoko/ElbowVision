@@ -449,13 +449,21 @@ def detect_with_yolo_pose(image_array: np.ndarray) -> Optional[dict]:
             "y": (lat_epic_pt["y"] + med_epic_pt["y"]) / 2,
         }
 
-        # AP/LAT判定: 上顆間距離で判定（olecranonがあれば追加指標）
+        # AP/LAT判定:
+        # 主指標: 前腕軸の垂直からの傾き
+        #   伸展AP像(150-180°): 前腕はほぼ垂直 (|dx/dy| < tan35° ≈ 0.70)
+        #   屈曲LAT像(60-120°): 前腕は水平寄り (|dx/dy| > 0.70)
+        # 上顆間距離は v6 LAT(AP投影)では AP像と区別できないため補助指標のみ
+        fa_dx = forearm_pt["x"] - condyle_mid["x"]
+        fa_dy = forearm_pt["y"] - condyle_mid["y"]
+        forearm_oblique = abs(fa_dx) > abs(fa_dy) * 0.70  # 前腕が垂直から35°以上傾いている
         epic_sep = math.sqrt((lat_epic_pt["x"] - med_epic_pt["x"])**2 + (lat_epic_pt["y"] - med_epic_pt["y"])**2)
-        if olecranon_pt is not None:
+        if forearm_oblique:
+            view_type = "LAT"  # 前腕が水平寄り → 屈曲LAT像
+        elif olecranon_pt is not None:
             olecranon_posterior = olecranon_pt["y"] > condyle_mid["y"] + h * 0.03
             view_type = "AP" if (epic_sep > w * 0.06 and not olecranon_posterior) else "LAT"
         else:
-            # 4KPモデル: 上顆間距離のみで判定
             view_type = "AP" if epic_sep > w * 0.06 else "LAT"
 
         humerus_axis_angle = angle_deg(humerus_pt, condyle_mid)
@@ -786,6 +794,13 @@ async def analyze_elbow(file: UploadFile = File(...)):
                 }
             except Exception as e:
                 print(f"ConvNeXt inference failed: {e}")
+
+        # ConvNeXt屈曲角でYOLO幾何計算を上書き（LAT像のみ）
+        # v6 LAT像はAP投影なのでYOLO幾何計算では正確な屈曲角が得られない
+        if (second_opinion is not None
+                and second_opinion.get("flexion_deg") is not None
+                and positioning_correction.get("angles") is not None):
+            positioning_correction["angles"]["flexion"] = second_opinion["flexion_deg"]
 
         # 推論統計の記録
         _record_stats(landmarks)
