@@ -9,7 +9,7 @@
 #   - elbow-api/venv が構築済みであること
 #
 # 使い方:
-#   cd /Users/kohei/develop/research/ElbowVision
+#   cd ~/develop/research/ElbowVision
 #   bash scripts/run_analysis_pipeline.sh
 #
 #   # 特定ステップのみ実行:

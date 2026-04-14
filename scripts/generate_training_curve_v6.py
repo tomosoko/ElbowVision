@@ -2,7 +2,7 @@
 YOLOv8-Pose v6 訓練曲線生成 (論文用)
 
 使い方:
-  cd /Users/kohei/develop/research/ElbowVision
+  cd ~/develop/research/ElbowVision
   python scripts/generate_training_curve_v6.py
 """
 from __future__ import annotations

@@ -9,7 +9,7 @@ Clinical scenario:
   then run YOLO keypoint detection on the synthesized image.
 
 Usage:
-  cd /Users/kohei/develop/research/ElbowVision
+  cd ~/develop/research/ElbowVision
   source elbow-api/venv/bin/activate
   python scripts/pipeline_synth_to_yolo.py
   python scripts/pipeline_synth_to_yolo.py --target_angles 90 120 150
@@ -36,7 +36,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
-ROOT = "/Users/kohei/develop/research/ElbowVision"
+ROOT = "~/develop/research/ElbowVision"
 sys.path.insert(0, os.path.join(ROOT, "elbow-train"))
 
 from elbow_synth import (

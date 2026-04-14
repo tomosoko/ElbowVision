@@ -24,7 +24,7 @@ results = model.train(
     device="mps",
     workers=8,
     patience=30,
-    project="/Users/kohei/develop/research/ElbowVision/runs",
+    project="~/develop/research/ElbowVision/runs",
     name="elbow_v6",
     # v4より大きいbbox(w≈0.67)のためDFL勾配が大きい → loss weight調整
     optimizer="SGD",

@@ -19,7 +19,7 @@ from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
 # ── paths ──────────────────────────────────────────────────────────────
-ROOT = "/Users/kohei/develop/research/ElbowVision"
+ROOT = "~/develop/research/ElbowVision"
 sys.path.insert(0, os.path.join(ROOT, "elbow-train"))
 
 from elbow_synth import load_ct_volume, auto_detect_landmarks, generate_drr

@@ -2,7 +2,7 @@
 64GB RAM + MPS GPU + 14コアCPUをフル活用
 
 使い方:
-  cd /Users/kohei/develop/research/ElbowVision
+  cd ~/develop/research/ElbowVision
   source elbow-api/venv/bin/activate
   python elbow-train/train_m4pro.py
 """

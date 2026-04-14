@@ -2,7 +2,7 @@
 # train_pipeline.sh — YOLO + ConvNeXt 連続訓練パイプライン
 #
 # 使い方:
-#   cd /Users/kohei/develop/Dev/vision/ElbowVision
+#   cd ~/develop/Dev/vision/ElbowVision
 #   source elbow-api/venv/bin/activate
 #   bash scripts/train_pipeline.sh
 

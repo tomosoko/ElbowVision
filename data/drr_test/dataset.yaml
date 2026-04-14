@@ -1,4 +1,4 @@
-path: /Users/kohei/develop/Dev/vision/ElbowVision/data/drr_test
+path: ~/develop/Dev/vision/ElbowVision/data/drr_test
 train: images/train
 val: images/val
 nc: 1

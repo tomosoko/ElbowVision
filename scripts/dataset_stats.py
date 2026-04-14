@@ -4,7 +4,7 @@ ElbowVision データセット統計可視化スクリプト
 生成されたDRRデータセットの統計を可視化し、results/dataset_stats/ にPNG保存する。
 
 使い方:
-  cd /Users/kohei/develop/research/ElbowVision
+  cd ~/develop/research/ElbowVision
   source elbow-api/venv/bin/activate
   python scripts/dataset_stats.py --dataset_dir data/drr_dataset_512
 """

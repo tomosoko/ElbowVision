@@ -3,7 +3,7 @@
 ## インストール
 
 ```bash
-cd /Users/kohei/develop/Dev/vision/ElbowVision
+cd ~/develop/Dev/vision/ElbowVision
 python3 -m venv venv_labelstudio
 source venv_labelstudio/bin/activate
 pip install label-studio
@@ -14,7 +14,7 @@ pip install label-studio
 ## 起動
 
 ```bash
-source /Users/kohei/develop/Dev/vision/ElbowVision/venv_labelstudio/bin/activate
+source ~/develop/Dev/vision/ElbowVision/venv_labelstudio/bin/activate
 label-studio start
 ```
 
@@ -43,7 +43,7 @@ label-studio start
 
 **方法B: フォルダ指定（推奨）**
 1. 「Add Storage」→「Local files」
-2. Absolute local path: `/Users/kohei/develop/Dev/vision/ElbowVision/data/images`
+2. Absolute local path: `~/develop/Dev/vision/ElbowVision/data/images`
 3. 「Add Storage」→「Sync Storage」
 
 ### Labeling Setup タブ
@@ -124,12 +124,12 @@ cd ~/Downloads
 unzip labelstudio_export_*.zip -d elbow_labels/
 
 # ラベルファイルをプロジェクトに配置
-cp elbow_labels/labels/train/*.txt /Users/kohei/develop/Dev/vision/ElbowVision/data/labels/train/
-cp elbow_labels/labels/val/*.txt   /Users/kohei/develop/Dev/vision/ElbowVision/data/labels/val/
+cp elbow_labels/labels/train/*.txt ~/develop/Dev/vision/ElbowVision/data/labels/train/
+cp elbow_labels/labels/val/*.txt   ~/develop/Dev/vision/ElbowVision/data/labels/val/
 
 # 枚数確認
-ls /Users/kohei/develop/Dev/vision/ElbowVision/data/labels/train/ | wc -l
-ls /Users/kohei/develop/Dev/vision/ElbowVision/data/labels/val/   | wc -l
+ls ~/develop/Dev/vision/ElbowVision/data/labels/train/ | wc -l
+ls ~/develop/Dev/vision/ElbowVision/data/labels/val/   | wc -l
 ```
 
 画像ファイルとラベルファイルの数が一致していればOK。
@@ -139,7 +139,7 @@ ls /Users/kohei/develop/Dev/vision/ElbowVision/data/labels/val/   | wc -l
 ## ラベルファイルの形式確認
 
 ```bash
-cat /Users/kohei/develop/Dev/vision/ElbowVision/data/labels/train/AP_B_001.txt
+cat ~/develop/Dev/vision/ElbowVision/data/labels/train/AP_B_001.txt
 ```
 
 正しい形式（1行）:
@@ -161,7 +161,7 @@ cat /Users/kohei/develop/Dev/vision/ElbowVision/data/labels/train/AP_B_001.txt
 ```bash
 # 環境変数で許可する
 export LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED=true
-export LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT=/Users/kohei
+export LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT=~
 label-studio start
 ```
 

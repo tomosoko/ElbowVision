@@ -8,8 +8,8 @@ CTボリュームを読み込み、3つのアニメーションを生成:
   3. 視点回転（AP→LAT遷移）- 固定ポーズ
 
 使い方:
-  cd /Users/kohei/develop/research/ElbowVision
-  /Users/kohei/develop/research/ElbowVision/elbow-api/venv/bin/python scripts/generate_drr_gif.py
+  cd ~/develop/research/ElbowVision
+  ~/develop/research/ElbowVision/elbow-api/venv/bin/python scripts/generate_drr_gif.py
 """
 
 import os

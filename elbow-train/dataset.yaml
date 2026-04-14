@@ -1,4 +1,4 @@
-path: /Users/kohei/develop/Dev/vision/ElbowVision/data/yolo_dataset_v2   # データセットのルートパス（絶対パス）
+path: ~/develop/Dev/vision/ElbowVision/data/yolo_dataset_v2   # データセットのルートパス（絶対パス）
 train: images/train                        # 訓練画像（path からの相対パス）
 val: images/val                            # 検証画像
 

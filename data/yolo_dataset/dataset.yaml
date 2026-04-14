@@ -1,4 +1,4 @@
-path: /Users/kohei/develop/Dev/vision/ElbowVision/data/yolo_dataset
+path: ~/develop/Dev/vision/ElbowVision/data/yolo_dataset
 train: images/train
 val: images/val
 nc: 1

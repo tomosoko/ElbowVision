@@ -329,7 +329,7 @@ ElbowVision/
 ### DICOM → PNG 変換コマンド
 
 ```bash
-cd /Users/kohei/Dev/vision/ElbowVision
+cd ~/develop/research/ElbowVision
 
 # 単純X線DICOMを変換（CLAHE強調あり・512px・train/val自動分割）
 python elbow-train/dicom_to_png.py \

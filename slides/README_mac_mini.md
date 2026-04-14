@@ -10,7 +10,7 @@ ElbowVisionの新人向け紹介スライドを完成させる。
 
 ## 前提
 
-- ElbowVisionリポジトリが `/Users/kohei/develop/research/ElbowVision/` にある
+- ElbowVisionリポジトリが `~/develop/research/ElbowVision/` にある
 - `data/raw_dicom/` に `ct_180/`, `ct_135/`, `ct_90/`（または `ct_volume/`）が存在
 - `elbow-api/venv/` にPython環境がある
 
@@ -19,7 +19,7 @@ ElbowVisionの新人向け紹介スライドを完成させる。
 ### Step 1: git pull
 
 ```bash
-cd /Users/kohei/develop/research/ElbowVision
+cd ~/develop/research/ElbowVision
 git pull
 ```
 
@@ -28,8 +28,8 @@ git pull
 3軸（回旋・屈曲・視点切り替え）で変化するDRRアニメーションを生成する。
 
 ```bash
-cd /Users/kohei/develop/research/ElbowVision
-/Users/kohei/develop/research/ElbowVision/elbow-api/venv/bin/python scripts/generate_drr_gif.py
+cd ~/develop/research/ElbowVision
+~/develop/research/ElbowVision/elbow-api/venv/bin/python scripts/generate_drr_gif.py
 ```
 
 このスクリプトは以下の4つのGIFを出力する:
@@ -41,13 +41,13 @@ cd /Users/kohei/develop/research/ElbowVision
 もし3ボリュームCTがあるなら、`drr_motion_series.py` も実行して屈伸のフリップブック画像を生成:
 
 ```bash
-/Users/kohei/develop/research/ElbowVision/elbow-api/venv/bin/python scripts/drr_motion_series.py
+~/develop/research/ElbowVision/elbow-api/venv/bin/python scripts/drr_motion_series.py
 ```
 
 ### Step 3: スライドHTML生成（画像Base64埋め込み）
 
 ```bash
-cd /Users/kohei/develop/research/ElbowVision
+cd ~/develop/research/ElbowVision
 
 # 画像をBase64埋め込みしたMDを生成
 python3 -c "
