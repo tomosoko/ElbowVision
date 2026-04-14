@@ -181,7 +181,7 @@ app.add_middleware(
 async def health_check():
     return {
         "status": "ok",
-        "version": "2.0.0",
+        "version": "2.1.0-v6",
         "engines": {
             "yolo_pose":    yolo_model is not None,
             "convnext_xai": convnext_model is not None,
@@ -1036,7 +1036,7 @@ async def model_info():
         "yolo": {
             "loaded": yolo_model is not None,
             "model_path": YOLO_MODEL_PATH if yolo_model is not None else None,
-            "version": "YOLOv8 (ultralytics)",
+            "version": "YOLOv8s-Pose v6 (mAP50=0.995)",
             "task": "pose",
             "keypoints": 6,
             "keypoint_names": [
@@ -1047,7 +1047,7 @@ async def model_info():
         "convnext": {
             "loaded": convnext_model is not None,
             "model_path": CONVNEXT_MODEL_PATH if convnext_model is not None else None,
-            "version": "ConvNeXt-Small",
+            "version": "ConvNeXt-Small v6 (MAE=0.480deg, ICC=0.9985)",
             "outputs": ["rotation_error_deg", "flexion_deg"],
             "device": str(device) if device is not None else None,
         },
