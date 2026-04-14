@@ -873,10 +873,10 @@ def auto_detect_landmarks(volume: np.ndarray, bone_threshold: float = None,
             idx = np.where(ml_proj)[0]
             ml_ws.append(idx.max() - idx.min() if len(idx) >= 2 else 0)
         if len(set(ml_ws)) <= 3:
-            # バリエーション不足 → さらに閾値を上げる（P90を使用）
-            p90 = float(np.percentile(foreground, 70))
-            if p90 > bone_threshold:
-                bone_threshold = p90
+            # バリエーション不足 → さらに閾値を上げる（P70を使用）
+            p70 = float(np.percentile(foreground, 70))
+            if p70 > bone_threshold:
+                bone_threshold = p70
                 print(f"  骨閾値 (2段階Otsu+P70補正): {bone_threshold:.3f}")
             else:
                 print(f"  骨閾値 (2段階Otsu): {bone_threshold:.3f}")
@@ -1305,6 +1305,9 @@ def generate_dataset(args):
 
     # CSV サマリー（YOLOラベル兼用）
     csv_path = os.path.join(out_dir, "dataset_summary.csv")
+    if not summary_rows:
+        print("  ⚠ 生成画像が0枚のためCSVは作成しません")
+        return
     with open(csv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=summary_rows[0].keys())
         writer.writeheader()
@@ -1361,7 +1364,7 @@ def _apply_config_to_namespace(ns: argparse.Namespace, config: dict):
         'views':          'views',
     }
     for yaml_key, attr_name in key_map.items():
-        if yaml_key in config and not hasattr(ns, f'_cli_{attr_name}'):
+        if yaml_key in config and getattr(ns, attr_name, None) is None:
             val = config[yaml_key]
             # laterality: YAMLではリスト [R, L] だが、CLI互換のため最初の値を使用
             if yaml_key == 'laterality' and isinstance(val, list):
