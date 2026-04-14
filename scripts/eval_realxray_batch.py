@@ -84,7 +84,7 @@ def run_similarity(row: dict, out_dir: str, lib_cache=None,
         "xray_path":      row["xray_path"],
         "gt_flexion_deg": gt_angle,
         "pred_flexion_deg": result.best_angle,
-        "error_deg":      abs(result.best_angle - gt_angle) if gt_angle else None,
+        "error_deg":      abs(result.best_angle - gt_angle) if gt_angle is not None else None,
         "peak_ncc":       round(result.peak_ncc, 4),
         "sharpness":      round(result.sharpness, 3),
         "elapsed_s":      round(elapsed, 1),
@@ -99,7 +99,7 @@ def bland_altman_analysis(predictions_csv: str, out_dir: str) -> None:
     rows = []
     with open(predictions_csv) as f:
         for r in csv.DictReader(f):
-            if r["gt_flexion_deg"] and r["pred_flexion_deg"]:
+            if r["gt_flexion_deg"] not in (None, "") and r["pred_flexion_deg"] not in (None, ""):
                 rows.append({
                     "gt":   float(r["gt_flexion_deg"]),
                     "pred": float(r["pred_flexion_deg"]),
@@ -138,7 +138,7 @@ def bland_altman_analysis(predictions_csv: str, out_dir: str) -> None:
     ms_c  = ss_c / (2 - 1)
     # ICC(3,1): absolute agreement
     icc   = (ms_r - ms_e) / (ms_r + (2 - 1) * ms_e)
-    icc   = float(np.clip(icc, 0.0, 1.0))
+    icc   = float(np.clip(icc, -1.0, 1.0))
 
     icc_str = f"{icc:.4f}" if n >= 5 else f"{icc:.4f} (n<5, 参考値)"
 

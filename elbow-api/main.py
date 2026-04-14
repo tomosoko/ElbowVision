@@ -795,12 +795,12 @@ async def analyze_elbow(file: UploadFile = File(...)):
             except Exception as e:
                 print(f"ConvNeXt inference failed: {e}")
 
-        # ConvNeXt屈曲角でYOLO幾何計算を上書き（LAT像のみ）
+        # ConvNeXt屈曲角でlandmarks.angles.flexionを上書き（LAT像のみ）
         # v6 LAT像はAP投影なのでYOLO幾何計算では正確な屈曲角が得られない
+        # NOTE: positioning_correction.get("angles") は常にNoneのため誤りだった
         if (second_opinion is not None
-                and second_opinion.get("flexion_deg") is not None
-                and positioning_correction.get("angles") is not None):
-            positioning_correction["angles"]["flexion"] = second_opinion["flexion_deg"]
+                and second_opinion.get("flexion_deg") is not None):
+            landmarks["angles"]["flexion"] = second_opinion["flexion_deg"]
 
         # 推論統計の記録
         _record_stats(landmarks)
@@ -926,6 +926,11 @@ def _analyze_single_image(image_array: np.ndarray) -> dict:
             }
         except Exception as e:
             print(f"ConvNeXt inference failed: {e}")
+
+    # ConvNeXt屈曲角でlandmarks.angles.flexionを上書き（LAT像のみ）
+    if (second_opinion is not None
+            and second_opinion.get("flexion_deg") is not None):
+        landmarks["angles"]["flexion"] = second_opinion["flexion_deg"]
 
     _record_stats(landmarks)
 
