@@ -73,7 +73,18 @@ python elbow-train/elbow_synth.py \
 
 ### YOLOv8-Pose v6（2026-04-13）
 ```
-mAP50 = 0.995  runs/elbow_v6/weights/best.pt
+mAP50 = 0.995  (elbow_v612, early stop ep93)
+重み:   elbow-api/models/yolo_pose_best.pt  ← v6コピー済み
+```
+
+### 実X線推論結果（2026-04-14）
+```
+AP像 (3枚): rotation_err ≈ +22.9°, flexion ≈ 5.6° (AP不使用)
+LAT像(3枚): rotation_err ≈ -9.9°,  flexion ≈ 79.7° ← 90°ボリューム撮影と一致
+※ 推論コマンド:
+   cd elbow-api
+   venv/bin/python -c "sys.path.insert(0,'training'); ... ElbowConvNeXt ..."
+   ※ main.py はモデルパスが elbow-api/ 相対なので elbow-api/ から実行必須
 ```
 
 ## テスト（254件全通過）
