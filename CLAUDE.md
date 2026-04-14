@@ -67,7 +67,7 @@ python elbow-train/elbow_synth.py \
 ```
 データ:   data/yolo_dataset_v6/  Train 3400 / Val 600
 設定:     batch=64, epochs=150(patience=30), MPS GPU
-結果:     Best val error = 0.121 deg (ep91, early stop ep96)
+結果:     Best val error = 0.103 deg (ep125, 150ep完走, 437min)
 モデル:   elbow-api/elbow_convnext_best.pth
 ```
 
