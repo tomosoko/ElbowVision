@@ -257,6 +257,9 @@ def main() -> None:
             all_results.append(level_results[-1])
 
     # CSV保存
+    if not all_results:
+        print("評価できた結果がありません")
+        return
     csv_path = out_dir / "robustness_results.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=list(all_results[0].keys()))
