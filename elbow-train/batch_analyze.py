@@ -83,8 +83,10 @@ def main():
                     q["status"],
                     q.get("inference_engine", "classical_cv"),
                 ])
-                print(f"  OK: {fname:<30}  carrying={a['carrying_angle']:5.1f}°  "
-                      f"flexion={a['flexion']:5.1f}°  QA={q['score']}")
+                carrying_str = f"{a['carrying_angle']:5.1f}" if a['carrying_angle'] is not None else "  N/A"
+                flexion_str  = f"{a['flexion']:5.1f}" if a['flexion'] is not None else "  N/A"
+                print(f"  OK: {fname:<30}  carrying={carrying_str}°  "
+                      f"flexion={flexion_str}°  QA={q['score']}")
                 ok += 1
 
             except requests.exceptions.ConnectionError:

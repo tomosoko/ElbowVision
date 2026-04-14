@@ -150,17 +150,8 @@ def run_inference(image_path: str) -> dict:
     if landmarks is None:
         landmarks = detect_bone_landmarks_classical(image_array)
 
-    # エッジバリデーション
-    angles = landmarks["angles"]
-    primary_angle = angles["carrying_angle"] if angles["carrying_angle"] is not None else angles["flexion"]
-    edge_validation = None
-    if primary_angle is not None:
-        edge_validation = validate_angle_with_edges(image_array, primary_angle)
-
-    # ポジショニング補正推定
-    correction = estimate_positioning_correction(image_array, landmarks)
-
-    # ConvNeXt セカンドオピニオン（LAT屈曲角の上書き）
+    # ConvNeXt セカンドオピニオン（estimate_positioning_correction より先に推論）
+    convnext_pred = None
     if convnext_model is not None:
         try:
             import torch
@@ -169,14 +160,31 @@ def run_inference(image_path: str) -> dict:
             pil_img = PILImage.fromarray(img_rgb)
             img_t = convnext_transforms(pil_img).to(convnext_device)
             with torch.no_grad():
-                pred = convnext_model(img_t.unsqueeze(0))[0].cpu().numpy()
-            view = landmarks["qa"]["view_type"]
-            if view == "LAT":
-                landmarks["angles"]["flexion"] = round(float(pred[1]), 1)
-            elif view == "AP":
-                correction["rotation_error"] = round(float(pred[0]), 1)
+                convnext_pred = convnext_model(img_t.unsqueeze(0))[0].cpu().numpy()
         except Exception as e:
             print(f"ConvNeXt inference failed: {e}")
+
+    # LAT屈曲角をConvNeXtで上書き（ポジショニング補正計算に反映するため先行）
+    if convnext_pred is not None:
+        view = landmarks["qa"]["view_type"]
+        if view == "LAT":
+            landmarks["angles"]["flexion"] = round(float(convnext_pred[1]), 1)
+
+    # エッジバリデーション
+    angles = landmarks["angles"]
+    primary_angle = angles["carrying_angle"] if angles["carrying_angle"] is not None else angles["flexion"]
+    edge_validation = None
+    if primary_angle is not None:
+        edge_validation = validate_angle_with_edges(image_array, primary_angle)
+
+    # ポジショニング補正推定（ConvNeXt上書き後に実行）
+    correction = estimate_positioning_correction(image_array, landmarks)
+
+    # AP rotation_errorをConvNeXtで上書き（correctionの出力を置き換え）
+    if convnext_pred is not None:
+        view = landmarks["qa"]["view_type"]
+        if view == "AP":
+            correction["rotation_error"] = round(float(convnext_pred[0]), 1)
 
     return {
         "filename": filename,
