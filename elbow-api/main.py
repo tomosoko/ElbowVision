@@ -40,8 +40,9 @@ try:
 except ImportError:
     YOLO_INSTALLED = False
 
+_API_DIR = os.path.dirname(os.path.abspath(__file__))
 _YOLO_CANDIDATE_PATHS = [
-    
+    os.path.join(_API_DIR, "models", "yolo_pose_best.pt"),
     "models/yolo_pose_best.pt",
     "best.pt",
     "elbow_train/runs/pose/elbowvision_pose_model/weights/best.pt",
@@ -76,7 +77,7 @@ except ImportError:
     TORCH_INSTALLED = False
 
 # 出力: [rotation_error_deg, flexion_deg]
-CONVNEXT_MODEL_PATH = "elbow_convnext_best.pth"
+CONVNEXT_MODEL_PATH = os.path.join(_API_DIR, "elbow_convnext_best.pth")
 
 convnext_model = None
 device = None
