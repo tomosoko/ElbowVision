@@ -49,9 +49,10 @@ def main() -> None:
     fig = plt.figure(figsize=(14, 10))
     gs = GridSpec(2, 2, figure=fig, hspace=0.40, wspace=0.35)
 
-    # ── Panel A: DRR val Bland-Altman ──────────────────────────────────────────
+    # ── Panel A: DRR val Bland-Altman (v6優先) ─────────────────────────────────
     ax_a = fig.add_subplot(gs[0, 0])
-    ba_csv = _PROJECT_ROOT / "results/bland_altman/predictions.csv"
+    ba_csv_v6 = _PROJECT_ROOT / "results/bland_altman/predictions_v6.csv"
+    ba_csv = ba_csv_v6 if ba_csv_v6.exists() else _PROJECT_ROOT / "results/bland_altman/predictions.csv"
     if ba_csv.exists():
         rows = []
         with open(ba_csv) as f:
@@ -80,7 +81,8 @@ def main() -> None:
             ax_a.axhline(0,     color="gray",   linewidth=0.8, linestyle=":")
             ax_a.set_xlabel("Mean of CT-GT and Pred [°]")
             ax_a.set_ylabel("Pred − GT [°]")
-            ax_a.set_title(f"(A) Bland-Altman: DRR Val Set\nn={len(rows)}, MAE={mae:.2f}°, ICC=0.999")
+            ver = "v6" if ba_csv == ba_csv_v6 else "v5"
+            ax_a.set_title(f"(A) Bland-Altman: DRR Val Set ({ver})\nn={len(rows)}, MAE={mae:.3f}°")
             ax_a.legend(fontsize=8)
             ax_a.grid(True, alpha=0.3)
     else:
