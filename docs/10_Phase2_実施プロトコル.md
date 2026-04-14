@@ -144,7 +144,7 @@ python scripts/generate_paper_latex.py --out_dir results/paper_latex/
 |-----------|---------|
 | 3.3 Results (Real X-ray) | Phase 2 Bland-Altman数値で埋める |
 | Abstract | n=X (実X線枚数) を更新 |
-| Discussion 4.1 | Phase 2 MAEをDRR val (1.41°) と比較 |
+| Discussion 4.1 | Phase 2 MAEをDRR val v6 (0.480°) と比較 |
 | Conclusion | Phase 2成果を追記 |
 | Table 1b | LoA実データで更新 |
 
