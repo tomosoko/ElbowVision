@@ -1047,7 +1047,7 @@ async def model_info():
         "convnext": {
             "loaded": convnext_model is not None,
             "model_path": CONVNEXT_MODEL_PATH if convnext_model is not None else None,
-            "version": "ConvNeXt-Small v6 (MAE=0.480deg, ICC=0.9985)",
+            "version": "ConvNeXt-Small v6 (MAE=0.467deg, ICC=0.9988)",
             "outputs": ["rotation_error_deg", "flexion_deg"],
             "device": str(device) if device is not None else None,
         },
