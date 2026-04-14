@@ -254,50 +254,93 @@ def gen_table2_method_comparison(out_dir: Path) -> None:
         "new_LAT.png":        "new-LAT (standard)",
     }
 
+    # フィールド名: v5/v6分離版とレガシー版の両方に対応
+    has_v6 = "pred_convnext_v6" in rows[0]
+
     row_lines = []
     for r in rows:
         lbl = label_map.get(r["filename"], _latex_escape(r["filename"]))
         gt  = int(r["gt_angle"])
-        pc  = r["pred_convnext"]
-        ec  = r["err_convnext"]
-        ps  = r["pred_sim"]
-        es  = r["err_sim"]
-        row_lines.append(
-            f"    {lbl} & {gt} & {pc:.1f} & {ec:.1f} & {ps:.1f} & {es:.1f} \\\\"
+        if has_v6:
+            pv5 = r.get("pred_convnext_v5")
+            ev5 = r.get("err_convnext_v5")
+            pv6 = r.get("pred_convnext_v6")
+            ev6 = r.get("err_convnext_v6")
+            ps  = r["pred_sim"]
+            es  = r["err_sim"]
+            pv5_s = f"{pv5:.1f}" if pv5 is not None else "n/a"
+            ev5_s = f"{ev5:.1f}" if ev5 is not None else "—"
+            pv6_s = f"{pv6:.1f}" if pv6 is not None else "n/a"
+            ev6_s = f"{ev6:.1f}" if ev6 is not None else "—"
+            row_lines.append(
+                f"    {lbl} & {gt} & {pv5_s} & {ev5_s} & {pv6_s} & {ev6_s} & {ps:.1f} & {es:.1f} \\\\"
+            )
+        else:
+            pc = r["pred_convnext"]
+            ec = r["err_convnext"]
+            ps = r["pred_sim"]
+            es = r["err_sim"]
+            row_lines.append(
+                f"    {lbl} & {gt} & {pc:.1f} & {ec:.1f} & {ps:.1f} & {es:.1f} \\\\"
+            )
+
+    std_rows = [r for r in rows if "cr_008_2" not in r["filename"]]
+
+    if has_v6:
+        std_v5 = [r for r in std_rows if r.get("err_convnext_v5") is not None]
+        std_v6 = [r for r in std_rows if r.get("err_convnext_v6") is not None]
+        mae_std_v5 = sum(r["err_convnext_v5"] for r in std_v5) / len(std_v5) if std_v5 else float("nan")
+        mae_std_v6 = sum(r["err_convnext_v6"] for r in std_v6) / len(std_v6) if std_v6 else float("nan")
+        mae_std_s  = sum(r["err_sim"] for r in std_rows) / len(std_rows)
+        tabular = (
+            "  \\begin{tabular}{lcccccccc}\n"
+            "    \\hline\n"
+            "    \\multirow{2}{*}{Image} & \\multirow{2}{*}{GT (\\degree)} & "
+            "\\multicolumn{2}{c}{ConvNeXt v5} & \\multicolumn{2}{c}{ConvNeXt v6} & "
+            "\\multicolumn{2}{c}{Similarity Matching} \\\\\n"
+            "    & & Pred & Err & Pred & Err & Pred & Err \\\\\n"
+            "    \\hline\n"
+            + "\n".join(row_lines) + "\n"
+            "    \\hline\n"
+            f"    \\textbf{{MAE}} (standard, $n=3$) & & & {mae_std_v5:.1f} & & \\textbf{{{mae_std_v6:.1f}}} & & \\textbf{{{mae_std_s:.1f}}} \\\\\n"
+            f"    \\textbf{{DRR-val MAE}} & — & — & 1.412 & — & \\textbf{{0.467}} & — & — \\\\\n"
+            f"    \\textbf{{DRR-val ICC(3,1)}} & — & — & 0.9989 & — & \\textbf{{0.9988}} & — & — \\\\\n"
+            "    \\hline\n"
+            "  \\end{tabular}\n"
         )
-
-    std_rows  = [r for r in rows if "cr_008_2" not in r["filename"]]
-    mae_std_c = sum(r["err_convnext"] for r in std_rows) / len(std_rows)
-    mae_std_s = sum(r["err_sim"] for r in std_rows) / len(std_rows)
-    mae_all_c = sum(r["err_convnext"] for r in rows) / len(rows)
-    mae_all_s = sum(r["err_sim"] for r in rows) / len(rows)
-
-    tabular = (
-        "  \\begin{tabular}{lcccccc}\n"
-        "    \\hline\n"
-        "    \\multirow{2}{*}{Image} & \\multirow{2}{*}{GT (\\degree)} & "
-        "\\multicolumn{2}{c}{ConvNeXt} & \\multicolumn{2}{c}{Similarity Matching} \\\\\n"
-        "    & & Pred (\\degree) & Err (\\degree) & Pred (\\degree) & Err (\\degree) \\\\\n"
-        "    \\hline\n"
-        + "\n".join(row_lines) + "\n"
-        "    \\hline\n"
-        f"    \\textbf{{MAE}} (standard, $n=3$) & & & \\textbf{{{mae_std_c:.1f}}} & & \\textbf{{{mae_std_s:.1f}}} \\\\\n"
-        f"    \\textbf{{MAE}} (all, $n=4$) & & & {mae_all_c:.1f} & & {mae_all_s:.1f} \\\\\n"
-        "    \\hline\n"
-        "  \\end{tabular}\n"
-    )
+    else:
+        mae_std_c = sum(r["err_convnext"] for r in std_rows) / len(std_rows)
+        mae_std_s = sum(r["err_sim"] for r in std_rows) / len(std_rows)
+        mae_all_c = sum(r["err_convnext"] for r in rows) / len(rows)
+        mae_all_s = sum(r["err_sim"] for r in rows) / len(rows)
+        tabular = (
+            "  \\begin{tabular}{lcccccc}\n"
+            "    \\hline\n"
+            "    \\multirow{2}{*}{Image} & \\multirow{2}{*}{GT (\\degree)} & "
+            "\\multicolumn{2}{c}{ConvNeXt} & \\multicolumn{2}{c}{Similarity Matching} \\\\\n"
+            "    & & Pred (\\degree) & Err (\\degree) & Pred (\\degree) & Err (\\degree) \\\\\n"
+            "    \\hline\n"
+            + "\n".join(row_lines) + "\n"
+            "    \\hline\n"
+            f"    \\textbf{{MAE}} (standard, $n=3$) & & & \\textbf{{{mae_std_c:.1f}}} & & \\textbf{{{mae_std_s:.1f}}} \\\\\n"
+            f"    \\textbf{{MAE}} (all, $n=4$) & & & {mae_all_c:.1f} & & {mae_all_s:.1f} \\\\\n"
+            "    \\hline\n"
+            "  \\end{tabular}\n"
+        )
     note = (
         "  \\smallskip\n"
         "  {\\footnotesize $^{\\dagger}$ Non-standard positioning (humerus in vertical orientation). "
-        "ConvNeXt trained on DRR only, without fine-tuning on real X-rays. "
-        "Similarity matching uses combined NCC + edge-NCC metric with DRR library cache.}\n"
+        "ConvNeXt v5 trained on single-volume DRR (n=1,365). "
+        "ConvNeXt v6 trained on multi-volume DRR (Train 3,400/Val 600, 3 flexion angles) with domain augmentation. "
+        "Similarity matching uses combined NCC + edge-NCC metric with DRR library cache; no fine-tuning required.}\n"
     )
     tex = _table_wrap(
         tabular + note,
         caption=(
-            "Per-image Comparison of ConvNeXt Direct Regression vs. "
+            "Per-image Comparison of ConvNeXt v5/v6 Direct Regression vs. "
             "Similarity Matching on Real Phantom Lateral X-rays (GT $= 90\\degree$). "
-            "All images acquired from a single phantom at a fixed 90\\degree{} flexion angle."
+            "All images acquired from a single phantom at a fixed 90\\degree{} flexion angle. "
+            "ConvNeXt v6 integrated with YOLOv8-Pose (mAP50 $= 0.995$)."
         ),
         label="tab:method_comparison",
     )
