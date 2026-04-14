@@ -6,7 +6,7 @@ data/yolo_dataset_v6/convnext_labels.csv のval分割全件を推論し、
 GT vs Pred CSV + Bland-Altman 解析を実行する。
 
 使い方:
-  cd /Users/kohei/develop/research/ElbowVision
+  cd ~/develop/research/ElbowVision
   python scripts/eval_convnext_v6.py
 
 出力:

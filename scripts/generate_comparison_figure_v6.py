@@ -2,7 +2,7 @@
 ConvNeXt v5/v6 vs 類似度マッチング 比較図生成 (v6対応版)
 
 使い方:
-  cd /Users/kohei/develop/research/ElbowVision
+  cd ~/develop/research/ElbowVision
   python scripts/generate_comparison_figure_v6.py
 """
 from __future__ import annotations
@@ -114,7 +114,7 @@ def generate_fig5b_v6_mae_summary(results: list[dict], out_path: Path) -> None:
 
     # DRR validation set MAE
     drrval_v5 = 1.412
-    drrval_v6 = 0.480
+    drrval_v6 = 0.467
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 5))
 

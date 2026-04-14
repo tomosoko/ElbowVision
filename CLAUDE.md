@@ -68,6 +68,7 @@ python elbow-train/elbow_synth.py \
 データ:   data/yolo_dataset_v6/  Train 3400 / Val 600
 設定:     batch=64, epochs=150(patience=30), MPS GPU
 結果:     Best val error = 0.103 deg (ep125, 150ep完走, 437min)
+         → Bland-Altman (n=510 LAT): MAE=0.467°, ICC=0.9988, Bias=-0.176°
 モデル:   elbow-api/elbow_convnext_best.pth
 ```
 
