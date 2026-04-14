@@ -826,7 +826,7 @@ def main() -> None:
                     "patient_id":   pid,
                     "pred_angle":   result.best_angle,
                     "gt_angle":     gt,
-                    "error":        abs(result.best_angle - gt) if gt else "",
+                    "error":        abs(result.best_angle - gt) if gt is not None else "",
                 })
             except Exception as e:
                 print(f"  [{pid}] ERROR: {e}")
