@@ -246,6 +246,9 @@ def gen_table2_method_comparison(out_dir: Path) -> None:
         data = json.load(f)
 
     rows = data["results"]
+    if not rows:
+        print("  SKIP table2: comparison.json has no results")
+        return
 
     label_map = {
         "008_LAT.png":        "008-LAT (standard)",
@@ -291,7 +294,7 @@ def gen_table2_method_comparison(out_dir: Path) -> None:
         std_v6 = [r for r in std_rows if r.get("err_convnext_v6") is not None]
         mae_std_v5 = sum(r["err_convnext_v5"] for r in std_v5) / len(std_v5) if std_v5 else float("nan")
         mae_std_v6 = sum(r["err_convnext_v6"] for r in std_v6) / len(std_v6) if std_v6 else float("nan")
-        mae_std_s  = sum(r["err_sim"] for r in std_rows) / len(std_rows)
+        mae_std_s  = sum(r["err_sim"] for r in std_rows) / len(std_rows) if std_rows else float("nan")
         tabular = (
             "  \\begin{tabular}{lcccccccc}\n"
             "    \\hline\n"
@@ -309,10 +312,10 @@ def gen_table2_method_comparison(out_dir: Path) -> None:
             "  \\end{tabular}\n"
         )
     else:
-        mae_std_c = sum(r["err_convnext"] for r in std_rows) / len(std_rows)
-        mae_std_s = sum(r["err_sim"] for r in std_rows) / len(std_rows)
-        mae_all_c = sum(r["err_convnext"] for r in rows) / len(rows)
-        mae_all_s = sum(r["err_sim"] for r in rows) / len(rows)
+        mae_std_c = sum(r["err_convnext"] for r in std_rows) / len(std_rows) if std_rows else float("nan")
+        mae_std_s = sum(r["err_sim"] for r in std_rows) / len(std_rows) if std_rows else float("nan")
+        mae_all_c = sum(r["err_convnext"] for r in rows) / len(rows) if rows else float("nan")
+        mae_all_s = sum(r["err_sim"] for r in rows) / len(rows) if rows else float("nan")
         tabular = (
             "  \\begin{tabular}{lcccccc}\n"
             "    \\hline\n"
@@ -383,11 +386,12 @@ def gen_table3_metric_comparison(out_dir: Path) -> None:
             mc_rows = list(csv.DictReader(f))
         std_rows_m = [r for r in mc_rows if "cr_008_2" not in r["filename"]]
         n_std = len(std_rows_m)
-        for col_key, *_ in metric_data:
-            biases = [float(r[f"bias_{col_key}"]) for r in std_rows_m]
-            errs   = [float(r[f"err_{col_key}"])  for r in std_rows_m]
-            computed_bias[col_key] = sum(biases) / len(biases)
-            computed_mae[col_key]  = sum(errs)   / len(errs)
+        if std_rows_m:
+            for col_key, *_ in metric_data:
+                biases = [float(r[f"bias_{col_key}"]) for r in std_rows_m]
+                errs   = [float(r[f"err_{col_key}"])  for r in std_rows_m]
+                computed_bias[col_key] = sum(biases) / len(biases)
+                computed_mae[col_key]  = sum(errs)   / len(errs)
 
     row_lines = []
     for col_key, latex_name, desc, bold in metric_data:
