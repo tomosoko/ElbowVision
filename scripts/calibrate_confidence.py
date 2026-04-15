@@ -48,7 +48,8 @@ def load_results(csv_path: str) -> list[dict]:
             sharpness = row.get("sharpness")
             error_key = "error" if "error" in row else "error_deg"
             error_val = row.get(error_key)
-            if peak_ncc and sharpness and error_val:
+            if peak_ncc is not None and sharpness is not None and error_val is not None \
+                    and peak_ncc != "" and sharpness != "" and error_val != "":
                 try:
                     rows.append({
                         "peak_ncc":  float(peak_ncc),
