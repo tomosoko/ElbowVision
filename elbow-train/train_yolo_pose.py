@@ -34,16 +34,21 @@ def main():
 
     model = YOLO(os.path.join(os.path.dirname(__file__), "yolov8s-pose.pt"))
 
+    # 最新バージョンを優先して検索（v6 → v5 → ... → v1 → 無印）
+    data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
     yaml_candidates = [
-        os.path.join(
-            os.path.dirname(__file__), "..", "data", "yolo_dataset", "dataset.yaml"
-        ),
-        os.path.join(
-            os.path.dirname(__file__), "..", "data", "yolo_dataset_v2", "dataset.yaml"
-        ),
-        os.path.join(os.path.dirname(__file__), "dataset.yaml"),
-        os.path.join(os.path.dirname(__file__), "..", "data", "dataset.yaml"),
+        os.path.join(data_dir, "yolo_dataset_production", "dataset.yaml"),
     ]
+    # v6 → v1 の降順で追加
+    for v in range(6, 0, -1):
+        yaml_candidates.append(
+            os.path.join(data_dir, f"yolo_dataset_v{v}", "dataset.yaml")
+        )
+    yaml_candidates.extend([
+        os.path.join(data_dir, "yolo_dataset", "dataset.yaml"),
+        os.path.join(os.path.dirname(__file__), "dataset.yaml"),
+        os.path.join(data_dir, "dataset.yaml"),
+    ])
     yaml_path = next(
         (p for p in yaml_candidates if os.path.exists(p)), yaml_candidates[0]
     )

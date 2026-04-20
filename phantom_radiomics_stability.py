@@ -200,8 +200,9 @@ def calculate_icc(values_by_condition):
         icc21 = icc_result[icc_result["Type"] == "ICC2"]["ICC"].values
         if len(icc21) > 0:
             return float(icc21[0])
-    except Exception:
-        pass
+    except Exception as e:
+        import sys
+        print(f"[phantom_radiomics] pingouin ICC失敗→手動計算にフォールバック: {e}", file=sys.stderr)
 
     # フォールバック: 手動計算
     all_vals = np.array(list(values_by_condition.values()))  # (n_cond, n_roi)

@@ -1004,6 +1004,13 @@ def auto_detect_landmarks(volume: np.ndarray, bone_threshold: float = None,
 # ─── メイン生成ループ ──────────────────────────────────────────────────────────
 
 def generate_dataset(args):
+    # 再現性確保: seed 指定時に乱数を固定
+    seed = getattr(args, 'seed', None)
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+        print(f"  乱数シード固定: {seed}")
+
     laterality = getattr(args, 'laterality', None)
     sid_mm     = getattr(args, 'sid',        1000.0)
     hu_min     = getattr(args, 'hu_min',     -400.0)
@@ -1088,6 +1095,33 @@ def generate_dataset(args):
 
     summary_rows = []
     img_idx = 0
+
+    # 実X線の参照ヒストグラム（累積分布関数）をキャッシュ
+    _real_xray_cdfs = {}
+    real_xray_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                  "data", "real_xray", "images")
+    for _rxf in ["008_AP.png", "008_LAT.png"]:
+        _rxp = os.path.join(real_xray_dir, _rxf)
+        if os.path.exists(_rxp):
+            _rx = cv2.imread(_rxp, cv2.IMREAD_GRAYSCALE)
+            _h = cv2.calcHist([_rx], [0], None, [256], [0, 256]).ravel()
+            _cdf = _h.cumsum()
+            _cdf = _cdf / (_cdf[-1] + 1e-8)
+            _real_xray_cdfs[_rxf] = _cdf
+    _real_cdf_list = list(_real_xray_cdfs.values()) if _real_xray_cdfs else []
+
+    def _histogram_match_to_real(img_u8: np.ndarray) -> np.ndarray:
+        """DRRのヒストグラムを実X線画像にマッチング"""
+        if not _real_cdf_list:
+            return img_u8
+        ref_cdf = random.choice(_real_cdf_list)
+        src_hist = cv2.calcHist([img_u8], [0], None, [256], [0, 256]).ravel()
+        src_cdf = src_hist.cumsum()
+        src_cdf = src_cdf / (src_cdf[-1] + 1e-8)
+        lut = np.zeros(256, dtype=np.uint8)
+        for s in range(256):
+            lut[s] = np.argmin(np.abs(ref_cdf - src_cdf[s]))
+        return lut[img_u8]
 
     def apply_domain_aug(drr_bgr: np.ndarray) -> np.ndarray:
         """DRR画像に実X線らしさを付与するaugmentation。--domain_aug 指定時のみ使用。"""
@@ -1177,33 +1211,6 @@ def generate_dataset(args):
             cropped = img[cy:cy+ch, cx:cx+cw].astype(np.uint8)
             img = cv2.resize(cropped, (w, h), interpolation=cv2.INTER_LINEAR).astype(np.float32)
         return img.astype(np.uint8)
-
-    # 実X線の参照ヒストグラム（累積分布関数）をキャッシュ
-    _real_xray_cdfs = {}
-    real_xray_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                  "data", "real_xray", "images")
-    for _rxf in ["008_AP.png", "008_LAT.png"]:
-        _rxp = os.path.join(real_xray_dir, _rxf)
-        if os.path.exists(_rxp):
-            _rx = cv2.imread(_rxp, cv2.IMREAD_GRAYSCALE)
-            _h = cv2.calcHist([_rx], [0], None, [256], [0, 256]).ravel()
-            _cdf = _h.cumsum()
-            _cdf = _cdf / (_cdf[-1] + 1e-8)
-            _real_xray_cdfs[_rxf] = _cdf
-    _real_cdf_list = list(_real_xray_cdfs.values()) if _real_xray_cdfs else []
-
-    def _histogram_match_to_real(img_u8: np.ndarray) -> np.ndarray:
-        """DRRのヒストグラムを実X線画像にマッチング"""
-        if not _real_cdf_list:
-            return img_u8
-        ref_cdf = random.choice(_real_cdf_list)
-        src_hist = cv2.calcHist([img_u8], [0], None, [256], [0, 256]).ravel()
-        src_cdf = src_hist.cumsum()
-        src_cdf = src_cdf / (src_cdf[-1] + 1e-8)
-        lut = np.zeros(256, dtype=np.uint8)
-        for s in range(256):
-            lut[s] = np.argmin(np.abs(ref_cdf - src_cdf[s]))
-        return lut[img_u8]
 
     def save_sample(drr, label_str, meta: dict, split: str):
         nonlocal img_idx
@@ -1362,6 +1369,7 @@ def _apply_config_to_namespace(ns: argparse.Namespace, config: dict):
         'hu_max':         'hu_max',
         'train_val_split': 'train_val_split',
         'views':          'views',
+        'seed':           'seed',
     }
     for yaml_key, attr_name in key_map.items():
         if yaml_key in config and getattr(ns, attr_name, None) is None:
@@ -1399,6 +1407,8 @@ def main():
                         help="HUウィンドウ上限（ファントム推奨: 1000、デフォルト: 1500）")
     parser.add_argument("--views",        default="AP,LAT",
                         help="生成するビュー（カンマ区切り: AP,LAT / AP / LAT）")
+    parser.add_argument("--seed",         type=int, default=None,
+                        help="乱数シード（再現性確保用。省略時はランダム）")
     args = parser.parse_args()
 
     # YAML設定の読み込み・マージ

@@ -7,6 +7,8 @@
   python elbow-train/train_m4pro.py
 """
 from ultralytics import YOLO
+import glob
+import os
 import torch
 import time
 
@@ -16,12 +18,21 @@ print(f"  MPS GPU: {torch.backends.mps.is_available()}")
 print(f"  PyTorch: {torch.__version__}")
 print("=" * 60)
 
+# 最新データセットを自動検出（production → v6 → v5 → ...）
+_data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
+_candidates = [os.path.join(_data_dir, "yolo_dataset_production", "dataset.yaml")]
+for _v in range(6, 0, -1):
+    _candidates.append(os.path.join(_data_dir, f"yolo_dataset_v{_v}", "dataset.yaml"))
+_candidates.append(os.path.join(_data_dir, "yolo_dataset", "dataset.yaml"))
+_dataset_yaml = next((p for p in _candidates if os.path.exists(p)), _candidates[-1])
+print(f"  Dataset: {os.path.abspath(_dataset_yaml)}")
+
 # yolov8s-pose (small) — nanoより精度高い、M4 Proなら余裕
 model = YOLO("yolov8s-pose.pt")
 
 start = time.time()
 results = model.train(
-    data="data/yolo_dataset_v3/dataset.yaml",
+    data=_dataset_yaml,
     epochs=150,
     imgsz=256,
     batch=64,           # 64GBメモリ活用（nano=16→small=64）

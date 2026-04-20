@@ -88,7 +88,8 @@ def load_dicom_series(directory: str) -> tuple[np.ndarray, dict]:
             if hasattr(ds, "ImagePositionPatient"):
                 z = float(ds.ImagePositionPatient[2])
                 files.append((z, path, ds))
-        except Exception:
+        except Exception as e:
+            print(f"[ct_reorient] DICOMスキップ {fname}: {e}", file=sys.stderr)
             continue
 
     if not files:

@@ -77,7 +77,9 @@ def load_existing_annotation(json_path):
             else:
                 result.append(None)
         return result, w, h
-    except Exception:
+    except Exception as e:
+        import sys
+        print(f"[annotate_keypoints] アノテーション読み込み失敗: {e}", file=sys.stderr)
         return None, 0, 0
 
 
