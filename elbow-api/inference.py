@@ -75,6 +75,10 @@ try:
     TORCH_INSTALLED = True
 except ImportError:
     TORCH_INSTALLED = False
+    torch = None  # type: ignore[assignment]
+    transforms = None  # type: ignore[assignment]
+    Image = None  # type: ignore[assignment]
+    ElbowConvNeXt = None  # type: ignore[assignment]
 
 # 出力: [rotation_error_deg, flexion_deg]
 CONVNEXT_MODEL_PATH = os.path.join(_API_DIR, "elbow_convnext_best.pth")
@@ -106,6 +110,8 @@ if TORCH_INSTALLED:
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ])
+else:
+    convnext_transforms = None  # type: ignore[assignment]
 
 
 # ─── Grad-CAM（ConvNeXtのlastconv層対応） ──────────────────────────────────────

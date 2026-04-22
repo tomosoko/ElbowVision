@@ -16,6 +16,7 @@ ElbowVision 論文用図表生成スクリプト
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 
@@ -285,7 +286,8 @@ def generate_fig3_drr_variations(out_path: str) -> None:
                         ax.imshow(img, cmap="gray")
                     else:
                         _draw_placeholder(ax)
-                except Exception:
+                except Exception as e:
+                    logging.debug("Failed to load image %s: %s", img_path, e)
                     _draw_placeholder(ax)
             else:
                 _draw_placeholder(ax)

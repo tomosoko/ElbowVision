@@ -328,8 +328,10 @@ print("=" * 70)
 # For each target angle, use the closest real CT volume
 # This minimizes rotation magnitude
 
-def nearest_volume_for_angle(target_angle, available_angles=[180.0, 135.0, 90.0]):
+def nearest_volume_for_angle(target_angle, available_angles=None):
     """Select the volume requiring minimum rotation."""
+    if available_angles is None:
+        available_angles = [180.0, 135.0, 90.0]
     return min(available_angles, key=lambda a: abs(a - target_angle))
 
 
