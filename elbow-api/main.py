@@ -26,7 +26,6 @@ from inference import (
     validate_angle_with_edges,
     estimate_positioning_correction,
     _decode_image,
-    _record_stats,
     _analyze_single_image,
     # GradCAM
     GradCAM,
@@ -127,58 +126,8 @@ async def analyze_elbow(file: UploadFile = File(...)):
         fname = (file.filename or "").lower()
         image_array = _decode_image(content, fname)
 
-        landmarks = detect_with_yolo_pose(image_array)
-        if landmarks is None:
-            landmarks = detect_bone_landmarks_classical(image_array)
-
-        # エッジバリデーション（AP/LATで有効な角度のみ検証）
-        angles = landmarks["angles"]
-        primary_angle = angles["carrying_angle"] if angles["carrying_angle"] is not None else angles["flexion"]
-        edge_validation = None
-        if primary_angle is not None:
-            edge_validation = validate_angle_with_edges(image_array, primary_angle)
-
-        # ConvNeXt セカンドオピニオン（ポジショニングズレ量推定）
-        # NOTE: estimate_positioning_correctionより先に実行してlandmarksを更新する必要がある
-        second_opinion = None
-        if TORCH_INSTALLED and convnext_model is not None:
-            try:
-                image_rgb = cv2.cvtColor(image_array, cv2.COLOR_BGR2RGB)
-                pil_img = Image.fromarray(image_rgb)
-                img_tensor = convnext_transforms(pil_img).to(device)
-                with torch.no_grad():
-                    pred = convnext_model(img_tensor.unsqueeze(0))[0].cpu().numpy()
-                view = landmarks["qa"]["view_type"]
-                # pred[0]=rotation_error_deg, pred[1]=flexion_deg
-                second_opinion = {
-                    "rotation_error_deg": round(float(pred[0]), 1) if view == "AP"  else None,
-                    "flexion_deg":        round(float(pred[1]), 1) if view == "LAT" else None,
-                    "model": "ConvNeXt-Small",
-                }
-            except Exception as e:
-                print(f"ConvNeXt inference failed: {e}")
-
-        # ConvNeXt屈曲角でlandmarks.angles.flexionを上書き（LAT像のみ）
-        # v6 LAT像はAP投影なのでYOLO幾何計算では正確な屈曲角が得られない
-        # estimate_positioning_correctionより前に適用しないとflexion_adviceが不正確になる
-        if (second_opinion is not None
-                and second_opinion.get("flexion_deg") is not None):
-            landmarks["angles"]["flexion"] = second_opinion["flexion_deg"]
-
-        # ポジショニング補正推定（外顆間距離 × 体格）— ConvNeXt上書き後に実行
-        positioning_correction = estimate_positioning_correction(image_array, landmarks)
-
-        # 推論統計の記録
-        _record_stats(landmarks)
-
-        return JSONResponse(content={
-            "success": True,
-            "landmarks": landmarks,
-            "edge_validation": edge_validation,
-            "positioning_correction": positioning_correction,
-            "second_opinion": second_opinion,
-            "image_size": {"width": image_array.shape[1], "height": image_array.shape[0]},
-        })
+        result = _analyze_single_image(image_array)
+        return JSONResponse(content=result)
     except HTTPException:
         raise
     except Exception as e:
