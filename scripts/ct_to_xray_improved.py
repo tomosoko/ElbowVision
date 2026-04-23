@@ -35,27 +35,18 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# ── paths ──────────────────────────────────────────────────────────────
-ROOT = "~/develop/research/ElbowVision"
-sys.path.insert(0, os.path.join(ROOT, "elbow-train"))
-
-from elbow_synth import (
-    load_ct_volume, auto_detect_landmarks, generate_drr,
-    rotation_matrix_z,
+# ── shared infrastructure ─────────────────────────────────────────────
+from drr_utils import (
+    ROOT, CT_DIR, SERIES, TARGET_SIZE, HU_MIN, HU_MAX,
+    load_all_volumes, resize_to_match, compute_dice, compute_ssim,
+    segment_and_split_bones, load_real_xray,
 )
 
-CT_DIR = os.path.join(ROOT, "data/raw_dicom/ct_volume",
-                      "ﾃｽﾄ 008_0009900008_20260310_108Y_F_000")
+sys.path.insert(0, os.path.join(ROOT, "elbow-train"))
+from elbow_synth import generate_drr, rotation_matrix_z
+
 OUT_DIR = os.path.join(ROOT, "results/ct_to_xray_synthesis")
 os.makedirs(OUT_DIR, exist_ok=True)
-
-REAL_XRAY_LAT = os.path.join(ROOT, "data/real_xray/images/cr_008_3_52kVp.png")
-REAL_XRAY_LAT2 = os.path.join(ROOT, "data/real_xray/images/008_LAT.png")
-
-# Series 4=180deg, 8=135deg, 12=90deg
-SERIES = [(4, 180.0), (8, 135.0), (12, 90.0)]
-TARGET_SIZE = 128
-HU_MIN, HU_MAX = 50, 1000
 
 FOREARM_NAMES = ["forearm_shaft", "radial_head", "olecranon"]
 HUMERUS_NAMES = ["humerus_shaft", "lateral_epicondyle", "medial_epicondyle",
@@ -124,15 +115,7 @@ print("=" * 70)
 print("Step 1: Loading 3 CT volumes (180/135/90 deg)")
 print("=" * 70)
 
-volumes = {}
-for sn, angle in SERIES:
-    print(f"\n--- Series {sn}, flexion={angle} deg ---")
-    vol, spacing, lat, vox_mm = load_ct_volume(
-        CT_DIR, laterality='L', series_num=sn,
-        hu_min=HU_MIN, hu_max=HU_MAX, target_size=TARGET_SIZE)
-    lm = auto_detect_landmarks(vol, laterality=lat)
-    volumes[angle] = dict(vol=vol, lm=lm, voxel_mm=vox_mm, laterality=lat)
-    print(f"  Volume shape: {vol.shape}, voxel_mm: {vox_mm:.3f}")
+volumes = load_all_volumes()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -393,41 +376,9 @@ print("\n" + "=" * 70)
 print("Step 5: Bone segmentation & humerus/forearm separation")
 print("=" * 70)
 
-bone_vals = vol_180[vol_180 > 0.01]
-if len(bone_vals) > 0:
-    bone_thresh = float(np.percentile(bone_vals, 50))
-else:
-    bone_thresh = 0.3
-print(f"  Bone threshold: {bone_thresh:.3f}")
-
-bone_mask = vol_180 > bone_thresh
-
-joint_pd_idx = int(jc_vox[0])
-print(f"  Joint center PD index: {joint_pd_idx} / {pd_size}")
-
-# Smooth transition zone
-blend_half = max(3, int(pd_size * 0.04))
-print(f"  Blend half-width: {blend_half} voxels")
-
-humerus_weight = np.zeros(pd_size, dtype=np.float32)
-for i in range(pd_size):
-    if i < joint_pd_idx - blend_half:
-        humerus_weight[i] = 1.0
-    elif i > joint_pd_idx + blend_half:
-        humerus_weight[i] = 0.0
-    else:
-        humerus_weight[i] = 0.5 * (1.0 - (i - joint_pd_idx) / blend_half)
-
-forearm_weight = 1.0 - humerus_weight
-
-vol_bone = vol_180 * bone_mask.astype(np.float32)
-vol_humerus = vol_bone * humerus_weight[:, None, None]
-vol_forearm = vol_bone * forearm_weight[:, None, None]
-
-n_hum_vox = int((vol_humerus > 0.01).sum())
-n_fore_vox = int((vol_forearm > 0.01).sum())
-print(f"  Humerus bone voxels: {n_hum_vox}")
-print(f"  Forearm bone voxels: {n_fore_vox}")
+bone_split = segment_and_split_bones(vol_180, volumes[180.0]['lm'])
+vol_humerus = bone_split['vol_humerus']
+vol_forearm = bone_split['vol_forearm']
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -568,22 +519,9 @@ gt_90 = gt_drrs[90.0]
 gt_135 = gt_drrs[135.0]
 
 
-def resize_to_match(img, target):
-    if img.shape != target.shape:
-        return cv2.resize(img, (target.shape[1], target.shape[0]),
-                          interpolation=cv2.INTER_LINEAR)
-    return img
-
-
 def compute_metrics(pred, gt):
     """Compute SSIM and Bone Dice between predicted and ground truth DRR."""
-    pred_r = resize_to_match(pred, gt)
-    s = ssim(gt, pred_r, data_range=255)
-    _, gt_bin = cv2.threshold(gt, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    _, pred_bin = cv2.threshold(pred_r, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    intersection = np.logical_and(gt_bin > 0, pred_bin > 0).sum()
-    dice = 2.0 * intersection / (np.sum(gt_bin > 0) + np.sum(pred_bin > 0) + 1e-8)
-    return s, dice
+    return compute_ssim(pred, gt), compute_dice(pred, gt)
 
 
 metrics = {}
@@ -620,12 +558,7 @@ print("\n" + "=" * 70)
 print("Step 10: Real CR X-ray comparison")
 print("=" * 70)
 
-real_xray = None
-for rpath in [REAL_XRAY_LAT, REAL_XRAY_LAT2]:
-    if os.path.exists(rpath):
-        real_xray = cv2.imread(rpath, cv2.IMREAD_GRAYSCALE)
-        print(f"  Loaded: {rpath} ({real_xray.shape})")
-        break
+real_xray = load_real_xray()
 
 if real_xray is not None:
     real_resized = cv2.resize(real_xray, (gt_90.shape[1], gt_90.shape[0]),

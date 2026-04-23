@@ -25,6 +25,7 @@ import sys
 import os
 import math
 import json
+import re
 import time
 
 import cv2
@@ -34,73 +35,28 @@ from scipy.ndimage import (
     distance_transform_edt,
 )
 from scipy.spatial.transform import Rotation
-from skimage.metrics import structural_similarity as ssim
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-ROOT = "~/develop/research/ElbowVision"
-sys.path.insert(0, os.path.join(ROOT, "elbow-train"))
-
-from elbow_synth import (
-    load_ct_volume, auto_detect_landmarks, generate_drr,
-    rotation_matrix_z, rotate_volume_and_landmarks,
+# ── shared infrastructure ─────────────────────────────────────────────
+from drr_utils import (
+    ROOT, CT_DIR, SERIES, TARGET_SIZE, HU_MIN, HU_MAX,
+    load_all_volumes, resize_to_match,
+    compute_dice, compute_ssim, compute_all_metrics,
+    histogram_match, segment_and_split_bones, load_real_xray,
 )
 
-CT_DIR = os.path.join(ROOT, "data/raw_dicom/ct_volume",
-                      "ﾃｽﾄ 008_0009900008_20260310_108Y_F_000")
+sys.path.insert(0, os.path.join(ROOT, "elbow-train"))
+from elbow_synth import (
+    generate_drr, rotation_matrix_z, rotate_volume_and_landmarks,
+)
+
 OUT_DIR = os.path.join(ROOT, "results/ct_to_xray_synthesis/final")
 os.makedirs(OUT_DIR, exist_ok=True)
 
-REAL_XRAY_LAT = os.path.join(ROOT, "data/real_xray/images/cr_008_3_52kVp.png")
-REAL_XRAY_LAT2 = os.path.join(ROOT, "data/real_xray/images/008_LAT.png")
-
-SERIES = [(4, 180.0), (8, 135.0), (12, 90.0)]
-TARGET_SIZE = 128
-HU_MIN, HU_MAX = 50, 1000
-
 t0 = time.time()
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Utilities
-# ═══════════════════════════════════════════════════════════════════════
-
-def compute_dice(pred, gt, method='otsu'):
-    if pred.shape != gt.shape:
-        pred = cv2.resize(pred, (gt.shape[1], gt.shape[0]))
-    if method == 'otsu':
-        _, gb = cv2.threshold(gt, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        _, pb = cv2.threshold(pred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    else:
-        gb = (gt > 30).astype(np.uint8) * 255
-        pb = (pred > 30).astype(np.uint8) * 255
-    inter = np.logical_and(gb > 0, pb > 0).sum()
-    return 2.0 * inter / (np.sum(gb > 0) + np.sum(pb > 0) + 1e-8)
-
-
-def compute_ssim(pred, gt):
-    if pred.shape != gt.shape:
-        pred = cv2.resize(pred, (gt.shape[1], gt.shape[0]))
-    return ssim(gt, pred, data_range=255)
-
-
-def compute_all_metrics(pred, gt):
-    d = compute_dice(pred, gt)
-    s = compute_ssim(pred, gt)
-    return float(s), float(d)
-
-
-def histogram_match(source, template):
-    s_cdf = np.zeros(256, np.float64)
-    t_cdf = np.zeros(256, np.float64)
-    for i in range(256):
-        s_cdf[i] = np.sum(source <= i)
-        t_cdf[i] = np.sum(template <= i)
-    s_cdf /= s_cdf[-1]; t_cdf /= t_cdf[-1]
-    mapping = np.array([np.argmin(np.abs(s_cdf[i] - t_cdf)) for i in range(256)], dtype=np.uint8)
-    return mapping[source]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -110,15 +66,7 @@ print("=" * 70)
 print("Step 1: Loading 3 CT volumes")
 print("=" * 70)
 
-volumes = {}
-for sn, angle in SERIES:
-    print(f"\n--- Series {sn}, {angle} deg ---")
-    vol, spacing, lat, vox_mm = load_ct_volume(
-        CT_DIR, laterality='L', series_num=sn,
-        hu_min=HU_MIN, hu_max=HU_MAX, target_size=TARGET_SIZE)
-    lm = auto_detect_landmarks(vol, laterality=lat)
-    volumes[angle] = dict(vol=vol, lm=lm, voxel_mm=vox_mm)
-    print(f"  shape={vol.shape}, voxel_mm={vox_mm:.3f}")
+volumes = load_all_volumes()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -167,52 +115,27 @@ print("Step 3: Bone segmentation")
 print("=" * 70)
 
 pd_size, ap_size, ml_size = vol_180.shape
-jc = lm_180['joint_center']
-jc_vox = np.array([jc[0]*pd_size, jc[1]*ap_size, jc[2]*ml_size])
-joint_pd = int(jc_vox[0])
-
-bone_vals = vol_180[vol_180 > 0.01]
-bone_thresh = float(np.percentile(bone_vals, 50))
-bone_mask = vol_180 > bone_thresh
-print(f"  Bone threshold: {bone_thresh:.3f}")
-print(f"  Joint center PD={joint_pd}/{pd_size}")
-
-# PD-based sigmoid split
-blend_half = max(3, int(pd_size * 0.04))
-hum_w = np.zeros(pd_size, dtype=np.float32)
-for i in range(pd_size):
-    if i < joint_pd - blend_half:
-        hum_w[i] = 1.0
-    elif i > joint_pd + blend_half:
-        hum_w[i] = 0.0
-    else:
-        hum_w[i] = 0.5 * (1.0 - (i - joint_pd) / blend_half)
-fore_w = 1.0 - hum_w
-
-# Volume variants for different approaches
-vol_bone = vol_180 * bone_mask.astype(np.float32)
 
 # Bone-only split
-vol_hum_bone = vol_bone * hum_w[:, None, None]
-vol_fore_bone = vol_bone * fore_w[:, None, None]
+bone_split = segment_and_split_bones(vol_180, lm_180, bone_only=True)
+vol_hum_bone = bone_split['vol_humerus']
+vol_fore_bone = bone_split['vol_forearm']
+vol_bone = bone_split['vol_bone']
+jc_vox = bone_split['jc_vox']
+joint_pd = bone_split['joint_pd_idx']
+bone_thresh = bone_split['bone_thresh']
+hum_w = bone_split['humerus_weight']
+fore_w = bone_split['forearm_weight']
 
-# Full split (bone + soft tissue)
+# Full split (bone + soft tissue) -- reuse weights from bone split
 vol_hum_full = vol_180 * hum_w[:, None, None]
 vol_fore_full = vol_180 * fore_w[:, None, None]
-
-print(f"  Humerus bone voxels: {int((vol_hum_bone > 0.01).sum())}")
-print(f"  Forearm bone voxels: {int((vol_fore_bone > 0.01).sum())}")
 
 
 # ═══════════════════════════════════════════════════════════════════════
 # Step 4: Load real CR
 # ═══════════════════════════════════════════════════════════════════════
-real_xray = None
-for rp in [REAL_XRAY_LAT, REAL_XRAY_LAT2]:
-    if os.path.exists(rp):
-        real_xray = cv2.imread(rp, cv2.IMREAD_GRAYSCALE)
-        print(f"\n  Real CR: {rp} ({real_xray.shape})")
-        break
+real_xray = load_real_xray()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -388,7 +311,6 @@ for cl_name, cl_obj in clahe_variants:
 
 # Fine angle search
 # Extract base angle adj from name
-import re
 adj_match = re.search(r'adj([+-]\d+)', b90)
 base_adj_90 = int(adj_match.group(1)) if adj_match else 0
 
