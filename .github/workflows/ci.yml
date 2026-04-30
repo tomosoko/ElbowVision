@@ -20,11 +20,19 @@ jobs:
           cache: pip
           cache-dependency-path: elbow-api/requirements.txt
 
+      - name: Checkout med-image-pipeline
+        uses: actions/checkout@v4
+        with:
+          repository: tomosoko/med-image-pipeline
+          token: ${{ secrets.GH_PAT }}
+          path: med-image-pipeline
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r elbow-api/requirements.txt
           pip install pytest
+          pip install ./med-image-pipeline
 
       - name: Run elbow-train tests (no DICOM/model required)
         run: |
