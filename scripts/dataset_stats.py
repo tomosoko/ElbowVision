@@ -116,7 +116,7 @@ def plot_sample_grid(dataset_dir: str, df: pd.DataFrame, out_dir: str, grid_size
     """サンプル画像のグリッド表示"""
     import cv2
 
-    fig, axes = plt.subplots(grid_size, grid_size, figsize=(16, 16))
+    fig, axes = plt.subplots(grid_size, grid_size, figsize=(16, 16), squeeze=False)
 
     # AP/LAT からそれぞれ半分ずつサンプリング
     samples = []
