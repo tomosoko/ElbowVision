@@ -1,10 +1,17 @@
 """elbow_synth.py の改善部分のテスト"""
 import sys
 import os
+import importlib
 import numpy as np
 import pytest
 
+# Remove any mock elbow_synth injected by other test modules during collection
+sys.modules.pop("elbow_synth", None)
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'elbow-train'))
+import elbow_synth  # noqa: E402
+importlib.reload(elbow_synth)  # ensure real module even if previously cached
+
 from elbow_synth import (
     rotation_matrix_x,
     rotation_matrix_y,

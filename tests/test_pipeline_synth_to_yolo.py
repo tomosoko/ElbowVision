@@ -27,7 +27,8 @@ _elbow_synth_mock.generate_drr = MagicMock(
 )
 _elbow_synth_mock.rotation_matrix_z = MagicMock(return_value=np.eye(3))
 _elbow_synth_mock.rotate_volume_and_landmarks = MagicMock()
-sys.modules.setdefault("elbow_synth", _elbow_synth_mock)
+_saved_elbow_synth = sys.modules.get("elbow_synth")
+sys.modules["elbow_synth"] = _elbow_synth_mock
 
 import importlib
 import pathlib
@@ -53,6 +54,12 @@ from scripts.pipeline_synth_to_yolo import (  # noqa: E402
     draw_keypoints,
     synthesize_lat_drr,
 )
+
+# Restore original state so downstream test files can import the real elbow_synth
+if _saved_elbow_synth is not None:
+    sys.modules["elbow_synth"] = _saved_elbow_synth
+else:
+    sys.modules.pop("elbow_synth", None)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

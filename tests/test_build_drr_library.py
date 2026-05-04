@@ -26,12 +26,19 @@ _mock_elbow_synth.load_ct_volume = mock.MagicMock()
 _mock_elbow_synth.auto_detect_landmarks = mock.MagicMock()
 _mock_elbow_synth.rotate_volume_and_landmarks = mock.MagicMock()
 _mock_elbow_synth.generate_drr = mock.MagicMock()
-sys.modules.setdefault("elbow_synth", _mock_elbow_synth)
+_saved_elbow_synth = sys.modules.get("elbow_synth")
+sys.modules["elbow_synth"] = _mock_elbow_synth
 
 # Make scripts/ importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 import build_drr_library as bdl
+
+# Restore original state so downstream test files can import the real elbow_synth
+if _saved_elbow_synth is not None:
+    sys.modules["elbow_synth"] = _saved_elbow_synth
+else:
+    del sys.modules["elbow_synth"]
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
