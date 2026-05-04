@@ -6,10 +6,13 @@ ElbowVision 推論エンジン
 - 角度計算ヘルパー
 - 画像デコード
 """
+import logging
 import os
 import math
 import time
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 import cv2
 import numpy as np
@@ -55,11 +58,11 @@ yolo_model = None
 if YOLO_INSTALLED and os.path.exists(YOLO_MODEL_PATH):
     try:
         yolo_model = YOLO(YOLO_MODEL_PATH)
-        print("Loaded YOLOv8 Pose Model.")
+        logger.info("Loaded YOLOv8 Pose Model.")
     except Exception as e:
-        print(f"Failed to load YOLO model: {e}")
+        logger.exception("Failed to load YOLO model: %s", e)
 else:
-    print("YOLOv8 Pose model not found. Falling back to Classical CV.")
+    logger.warning("YOLOv8 Pose model not found. Falling back to Classical CV.")
 
 # ─── ConvNeXt ポジショニングズレ回帰モデル + Grad-CAM（セカンドオピニオン） ──
 
@@ -99,11 +102,11 @@ if TORCH_INSTALLED:
             convnext_model.load_state_dict(torch.load(CONVNEXT_MODEL_PATH, map_location=device))
             convnext_model.to(device)
             convnext_model.eval()
-            print(f"Loaded ConvNeXt Positioning Regressor on {device}.")
+            logger.info("Loaded ConvNeXt Positioning Regressor on %s.", device)
         except Exception as e:
-            print(f"Failed to load ConvNeXt model: {e}")
+            logger.exception("Failed to load ConvNeXt model: %s", e)
     else:
-        print(f"ConvNeXt model not found ({CONVNEXT_MODEL_PATH}). Second-opinion disabled.")
+        logger.warning("ConvNeXt model not found (%s). Second-opinion disabled.", CONVNEXT_MODEL_PATH)
 
     convnext_transforms = transforms.Compose([
         transforms.Resize((224, 224)),
@@ -167,9 +170,9 @@ gradcam_engine: Optional[GradCAM] = None
 if TORCH_INSTALLED and convnext_model is not None:
     try:
         gradcam_engine = GradCAM(convnext_model)
-        print("GradCAM engine initialized.")
+        logger.info("GradCAM engine initialized.")
     except Exception as e:
-        print(f"GradCAM init failed: {e}")
+        logger.exception("GradCAM init failed: %s", e)
 
 
 # ─── 共通ユーティリティ ─────────────────────────────────────────────────────────
@@ -521,7 +524,7 @@ def detect_with_yolo_pose(image_array: np.ndarray) -> Optional[dict]:
             },
         }
     except Exception as e:
-        print(f"YOLOv8 Pose inference failed: {e}")
+        logger.exception("YOLOv8 Pose inference failed: %s", e)
         return None
 
 
@@ -733,7 +736,7 @@ def _analyze_single_image(image_array: np.ndarray) -> dict:
                 "model": "ConvNeXt-Small",
             }
         except Exception as e:
-            print(f"ConvNeXt inference failed: {e}")
+            logger.exception("ConvNeXt inference failed: %s", e)
 
     # ConvNeXt屈曲角でlandmarks.angles.flexionを上書き（LAT像のみ）
     # estimate_positioning_correctionより前に適用しないとflexion_adviceが不正確になる
