@@ -42,6 +42,7 @@ OsteoVision の train_angle_predictor.py を肘用に移植。
 """
 
 import argparse
+import logging
 import os
 import sys
 import tempfile
@@ -63,6 +64,8 @@ from torchvision import transforms
 # 同ディレクトリの convnext_model を参照
 sys.path.insert(0, os.path.dirname(__file__))
 from convnext_model import ElbowConvNeXt
+
+logger = logging.getLogger(__name__)
 
 
 # --- Dataset -----------------------------------------------------------------
@@ -174,7 +177,7 @@ def train(args):
         if torch.cuda.is_available()
         else "mps" if torch.backends.mps.is_available() else "cpu"
     )
-    print(f"Device: {device}")
+    logger.info("Device: %s", device)
 
     # Mixed precision: CUDA では float16、MPS/CPU では bfloat16（MPS対応）
     use_amp = args.amp and (device.type in ("cuda", "mps"))
@@ -188,9 +191,9 @@ def train(args):
         use_amp = False
 
     if use_amp:
-        print(f"Mixed precision: ON (dtype={amp_dtype})")
+        logger.info("Mixed precision: ON (dtype=%s)", amp_dtype)
     else:
-        print("Mixed precision: OFF")
+        logger.info("Mixed precision: OFF")
 
     transform = transforms.Compose(
         [
@@ -217,9 +220,9 @@ def train(args):
     required_cols = {"filename", "view_type", "rotation_error_deg", "flexion_deg"}
     missing = required_cols - set(df.columns)
     if missing:
-        print(f"ERROR: CSVに必須列が不足: {missing}")
-        print(f"  CSVの列: {list(df.columns)}")
-        print(
+        logger.error("CSVに必須列が不足: %s", missing)
+        logger.error("  CSVの列: %s", list(df.columns))
+        logger.error(
             "  elbow_synth.py が生成する convnext_labels.csv を使用してください。"
         )
         sys.exit(1)
@@ -227,7 +230,7 @@ def train(args):
     val_mask = df.get("split", pd.Series(["train"] * len(df))) == "val"
     df_train = df[~val_mask]
     df_val = df[val_mask]
-    print(f"train: {len(df_train)}枚 / val: {len(df_val)}枚")
+    logger.info("train: %d枚 / val: %d枚", len(df_train), len(df_val))
 
     # AP/LAT分布を表示
     for split_name, split_df in [("train", df_train), ("val", df_val)]:
@@ -235,7 +238,7 @@ def train(args):
         if len(views) > 0:
             ap_count = (views.str.upper() == "AP").sum()
             lat_count = (views.str.upper() == "LAT").sum()
-            print(f"  {split_name}: AP={ap_count}, LAT={lat_count}")
+            logger.info("  %s: AP=%d, LAT=%d", split_name, ap_count, lat_count)
 
     # プロセス固有のtempファイルを使用（並行実行時の競合を防ぐ）
     _pid = os.getpid()
@@ -274,11 +277,11 @@ def train(args):
         from torch.utils.tensorboard import SummaryWriter
 
         writer = SummaryWriter(log_dir=log_dir)
-        print(f"TensorBoard: {log_dir}")
-        print(f"  tensorboard --logdir {os.path.dirname(log_dir)}")
+        logger.info("TensorBoard: %s", log_dir)
+        logger.info("  tensorboard --logdir %s", os.path.dirname(log_dir))
     except ImportError:
         writer = None
-        print("TensorBoard: tensorboard未インストール（pip install tensorboard）")
+        logger.warning("TensorBoard: tensorboard未インストール（pip install tensorboard）")
 
     best_val_loss = float("inf")
     patience_count = 0
@@ -351,23 +354,22 @@ def train(args):
             )
             writer.add_scalar("LearningRate", current_lr, epoch)
 
-        print(
-            f"Epoch {epoch:3d}/{args.epochs}  "
-            f"train={train_loss:.3f} deg  val={val_loss:.3f} deg  "
-            f"lr={current_lr:.2e}"
+        logger.info(
+            "Epoch %3d/%d  train=%.3f deg  val=%.3f deg  lr=%.2e",
+            epoch, args.epochs, train_loss, val_loss, current_lr,
         )
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             patience_count = 0
             torch.save(model.state_dict(), save_path)
-            print(
-                f"  -> Best model saved ({best_val_loss:.3f} deg) -> {save_path}"
+            logger.info(
+                "  -> Best model saved (%.3f deg) -> %s", best_val_loss, save_path
             )
         else:
             patience_count += 1
             if patience_count >= args.patience:
-                print(f"Early stopping at epoch {epoch}")
+                logger.info("Early stopping at epoch %d", epoch)
                 break
 
     if writer:
@@ -387,11 +389,11 @@ def train(args):
     )
     _save_loss_plot(train_losses, val_losses, learning_rates, plot_path)
 
-    print(f"\n訓練完了。最良val loss: {best_val_loss:.3f} deg")
-    print(f"保存先: {save_path}")
-    print(f"Loss曲線: {plot_path}")
+    logger.info("訓練完了。最良val loss: %.3f deg", best_val_loss)
+    logger.info("保存先: %s", save_path)
+    logger.info("Loss曲線: %s", plot_path)
     if writer:
-        print(f"TensorBoard: tensorboard --logdir {os.path.dirname(log_dir)}")
+        logger.info("TensorBoard: tensorboard --logdir %s", os.path.dirname(log_dir))
 
 
 def _save_loss_plot(
@@ -428,13 +430,18 @@ def _save_loss_plot(
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"Loss曲線を保存: {save_path}")
+    logger.info("Loss曲線を保存: %s", save_path)
 
 
 # --- エントリポイント ---------------------------------------------------------
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
     parser = argparse.ArgumentParser(description="ElbowVision ConvNeXt訓練")
     parser.add_argument("--csv", required=True, help="データセットCSVパス（convnext_labels.csv推奨）")
     parser.add_argument("--imgs", required=True, help="画像ディレクトリ（images/を指定）")
