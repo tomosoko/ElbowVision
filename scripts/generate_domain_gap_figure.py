@@ -21,6 +21,28 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
 
+def edge_density(img: np.ndarray) -> float:
+    """Canny エッジ密度（0〜1）を返す"""
+    import cv2
+    edges = cv2.Canny(img, 50, 150)
+    return float(edges.sum()) / (edges.size * 255)
+
+
+def contrast_rms(img: np.ndarray) -> float:
+    """RMSコントラスト（標準偏差）を返す"""
+    return float(img.astype(float).std())
+
+
+def hist_intersection(img1: np.ndarray, img2: np.ndarray) -> float:
+    """正規化ヒストグラム交差度（0〜1）を返す"""
+    import cv2
+    h1 = cv2.calcHist([img1], [0], None, [256], [0, 256]).flatten()
+    h2 = cv2.calcHist([img2], [0], None, [256], [0, 256]).flatten()
+    h1 = h1 / (h1.sum() + 1e-8)
+    h2 = h2 / (h2.sum() + 1e-8)
+    return float(np.minimum(h1, h2).sum())
+
+
 def _load_drr_at_90(library_path: Path) -> np.ndarray | None:
     """DRRライブラリから90°に最も近い画像を取得"""
     try:
@@ -122,20 +144,6 @@ def main() -> None:
     real_resized = cv2.resize(real_img, (target_size, target_size))
 
     # ── ドメインギャップ指標の計算 ─────────────────────────────────────────────
-    def edge_density(img: np.ndarray) -> float:
-        edges = cv2.Canny(img, 50, 150)
-        return float(edges.sum()) / (edges.size * 255)
-
-    def contrast_rms(img: np.ndarray) -> float:
-        return float(img.astype(float).std())
-
-    def hist_intersection(img1: np.ndarray, img2: np.ndarray) -> float:
-        h1 = cv2.calcHist([img1], [0], None, [256], [0, 256]).flatten()
-        h2 = cv2.calcHist([img2], [0], None, [256], [0, 256]).flatten()
-        h1 = h1 / (h1.sum() + 1e-8)
-        h2 = h2 / (h2.sum() + 1e-8)
-        return float(np.minimum(h1, h2).sum())
-
     # SSIM
     try:
         from skimage.metrics import structural_similarity as ssim
