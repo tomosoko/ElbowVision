@@ -28,6 +28,9 @@ sys.path.insert(0, str(_PROJECT_ROOT / "elbow-train"))
 sys.path.insert(0, str(_PROJECT_ROOT))
 
 
+from scripts.similarity_matching import extract_edges, ncc, preprocess_image
+
+
 def compute_ncc_curve(
     query_img: np.ndarray,
     angle_to_drr: dict[float, np.ndarray],
@@ -40,7 +43,6 @@ def compute_ncc_curve(
     is_drr=True: queryはCLAHE済みuint8（ライブラリから取得）
     is_drr=False: queryは実X線（preprocess_image で前処理）
     """
-    from scripts.similarity_matching import extract_edges, ncc, preprocess_image
 
     if is_drr:
         xray_norm = query_img.astype(np.float32) / 255.0
@@ -60,6 +62,71 @@ def compute_ncc_curve(
         encc_vals.append(ncc(drr_edge, xray_edge))
 
     return angles_sorted, ncc_vals, encc_vals
+
+
+def snap_to_nearest_angle(
+    gt_angle: float,
+    available_angles: list[float] | set[float],
+) -> float:
+    """gt_angle をライブラリに存在する最近傍角度にスナップする。"""
+    return min(available_angles, key=lambda a: abs(a - gt_angle))
+
+
+def compute_sharpness(values: list[float] | np.ndarray) -> float:
+    """NCC曲線のピーク鮮鋭度を計算する。(peak - mean) / std"""
+    arr = np.asarray(values, dtype=np.float64)
+    std = arr.std()
+    return float((arr.max() - arr.mean()) / (std + 1e-8))
+
+
+def plot_curve(
+    ax,
+    angles: list[float],
+    ncc_v: list[float],
+    encc_v: list[float],
+    title: str,
+    angle_min: float,
+    angle_max: float,
+    gt_angle: float | None = None,
+    mark_best: bool = True,
+) -> tuple[float, float, float]:
+    """
+    NCC / edge-NCC 曲線を描画し (best_combined_angle, peak_ncc, sharpness) を返す。
+    """
+    C_NCC  = "#2196F3"
+    C_ENCC = "#FF9800"
+    C_GT   = "#f44336"
+
+    ax.plot(angles, ncc_v,  "-", color=C_NCC,  linewidth=1.5, label="NCC")
+    ax.plot(angles, encc_v, "-", color=C_ENCC, linewidth=1.0, alpha=0.7, label="edge-NCC")
+
+    best_ncc_a  = angles[np.argmax(ncc_v)]
+    best_encc_a = angles[np.argmax(encc_v)]
+    best_comb   = (best_ncc_a + best_encc_a) / 2
+
+    if mark_best:
+        ax.axvline(best_ncc_a,  color=C_NCC,  linewidth=1.0, linestyle="--", alpha=0.7,
+                   label=f"NCC peak={best_ncc_a:.1f}°")
+        ax.axvline(best_encc_a, color=C_ENCC, linewidth=1.0, linestyle="--", alpha=0.7,
+                   label=f"edge-NCC peak={best_encc_a:.1f}°")
+        ax.axvline(best_comb,   color="black", linewidth=1.5, linestyle="-",  alpha=0.9,
+                   label=f"Combined={best_comb:.1f}°")
+
+    if gt_angle is not None:
+        ax.axvline(gt_angle, color=C_GT, linewidth=1.2, linestyle=":", alpha=0.8,
+                   label=f"GT={gt_angle:.1f}°")
+
+    peak_ncc  = max(ncc_v)
+    sharpness = compute_sharpness(ncc_v)
+
+    ax.set_xlabel("Angle [°]")
+    ax.set_ylabel("NCC Score")
+    ax.set_title(f"{title}\npeak_ncc={peak_ncc:.3f}  sharpness={sharpness:.2f}")
+    ax.legend(fontsize=7, ncol=2)
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(angle_min, angle_max)
+
+    return best_comb, peak_ncc, sharpness
 
 
 def main() -> None:
@@ -82,8 +149,7 @@ def main() -> None:
 
     # ── クエリ画像の準備 ────────────────────────────────────────────────────
     gt_angle = args.gt_angle
-    # gt_angleがライブラリにない場合は最近傍にスナップ
-    gt_angle_snap = min(angle_to_drr.keys(), key=lambda a: abs(a - gt_angle))
+    gt_angle_snap = snap_to_nearest_angle(gt_angle, angle_to_drr.keys())
     if abs(gt_angle_snap - gt_angle) > 0.01:
         print(f"  [警告] GT角度 {gt_angle}° はライブラリに存在しません → {gt_angle_snap}° にスナップ")
     gt_angle = gt_angle_snap
@@ -136,58 +202,22 @@ def main() -> None:
     if n_panels == 1:
         axes = [axes]
 
-    # Colors
-    C_NCC  = "#2196F3"
-    C_ENCC = "#FF9800"
-    C_GT   = "#f44336"
-
-    def _plot_curve(ax, angles, ncc_v, encc_v, title, gt_angle=None, mark_best=True):
-        ax.plot(angles, ncc_v,  "-", color=C_NCC,  linewidth=1.5, label="NCC")
-        ax.plot(angles, encc_v, "-", color=C_ENCC, linewidth=1.0, alpha=0.7, label="edge-NCC")
-
-        best_ncc_a  = angles[np.argmax(ncc_v)]
-        best_encc_a = angles[np.argmax(encc_v)]
-        best_comb   = (best_ncc_a + best_encc_a) / 2
-
-        if mark_best:
-            ax.axvline(best_ncc_a,  color=C_NCC,  linewidth=1.0, linestyle="--", alpha=0.7,
-                       label=f"NCC peak={best_ncc_a:.1f}°")
-            ax.axvline(best_encc_a, color=C_ENCC, linewidth=1.0, linestyle="--", alpha=0.7,
-                       label=f"edge-NCC peak={best_encc_a:.1f}°")
-            ax.axvline(best_comb,   color="black", linewidth=1.5, linestyle="-",  alpha=0.9,
-                       label=f"Combined={best_comb:.1f}°")
-
-        if gt_angle is not None:
-            ax.axvline(gt_angle, color=C_GT, linewidth=1.2, linestyle=":", alpha=0.8,
-                       label=f"GT={gt_angle:.1f}°")
-
-        peak_ncc  = max(ncc_v)
-        ncc_arr   = np.array(ncc_v)
-        sharpness = (peak_ncc - ncc_arr.mean()) / (ncc_arr.std() + 1e-8)
-
-        ax.set_xlabel("Angle [°]")
-        ax.set_ylabel("NCC Score")
-        ax.set_title(f"{title}\npeak_ncc={peak_ncc:.3f}  sharpness={sharpness:.2f}")
-        ax.legend(fontsize=7, ncol=2)
-        ax.grid(True, alpha=0.3)
-        ax.set_xlim(angle_min, angle_max)
-
-        return best_comb, peak_ncc, sharpness
-
     # Panel 0: DRR-to-DRR (self-test)
-    best, pncc, sharp = _plot_curve(
+    best, pncc, sharp = plot_curve(
         axes[0], angles_std, ncc_std, encc_std,
         f"DRR-to-DRR (Standard)\nQuery: {gt_angle:.0f}° DRR",
+        angle_min, angle_max,
         gt_angle=gt_angle,
     )
     print(f"\nDRR-to-DRR: combined={best:.1f}° peak_ncc={pncc:.3f} sharpness={sharp:.2f}")
 
     # Panels 1+: Real X-rays
     for i, (label, (a, nc, enc)) in enumerate(realxray_curves.items()):
-        best, pncc, sharp = _plot_curve(
+        best, pncc, sharp = plot_curve(
             axes[i + 1], a, nc, enc,
             label,
-            gt_angle=90.0,  # All real X-rays are GT=90°
+            angle_min, angle_max,
+            gt_angle=90.0,
         )
         err = abs(best - 90.0)
         print(f"{label}: combined={best:.1f}° (err={err:.1f}°) peak_ncc={pncc:.3f} sharpness={sharp:.2f}")
